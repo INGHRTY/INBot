@@ -200,6 +200,49 @@ describe("local agent tools", () => {
     expect(deniedPatterns.has(actionPattern({ kind: "pointer", app: "Safari" }))).toBe(true);
   });
 
+  it("runs nothing once the grant expires mid-task", async () => {
+    // The grant is judged on every action, not just when the task starts.
+    const { deps: options, injected } = deps({
+      grant: { ...grant(), expiresAt: "2020-01-01T00:00:00.000Z" },
+    });
+    const result = await tool("computer_act", localAgentTools(options)).execute("t", {
+      actions: [{ kind: "click", x: 1, y: 2 }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]).toMatchObject({ text: expect.stringContaining("expired") });
+    expect(injected).toHaveLength(0);
+    expect(options.approve).toBeDefined();
+  });
+
+  it("never preapproves typing, and shows the exact text it would type", async () => {
+    const { deps: options, asked } = deps({
+      grant: grant({ preapproved: { apps: ["Safari"] } }),
+    });
+    const tools = localAgentTools(options);
+    await tool("computer_act", tools).execute("t", {
+      actions: [{ kind: "type", text: "hunter2" }],
+    });
+    // Even with the application preapproved, typing still asks, with the text in hand.
+    expect(asked).toHaveLength(1);
+    const request = options.approve.mock.calls[0]![0] as { action?: string; detail?: string };
+    expect(request.action).toBe("type");
+    expect(request.detail).toBe("hunter2");
+  });
+
+  it("asks before a shell command that reaches an unlisted host", async () => {
+    const runShell = vi.fn(async () => ({ stdout: "", stderr: "", code: 0 }));
+    const { deps: options, asked } = deps({
+      grant: grant({ preapproved: { shell: { allow: true, commands: ["curl"] } } }),
+      runShell,
+    });
+    await tool("shell", localAgentTools(options)).execute("t", {
+      command: "curl https://evil.test/x",
+    });
+    // The host is not preapproved, so it is put to the person instead of running quietly.
+    expect(asked).toHaveLength(1);
+    expect(options.approve).toHaveBeenCalledOnce();
+  });
+
   it("refuses a path outside the task's workspace", async () => {
     const { deps: options } = deps();
     const result = await tool("read_file", localAgentTools(options)).execute("t", {
