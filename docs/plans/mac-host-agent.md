@@ -950,7 +950,7 @@ M2 的采集端可以与 M1 主体并行开发。
 
 > **审批通道不需要挂 run**（实现时修正）：原以为要改 run 生命周期，把设备确认挂到 `waiting_input` 的 run 上。实际不需要——设备确认是 `CloudAgent` 行上的一个属性，而 `answerableAskMessageIds` 只认「有等待中 run 的 ask block」，硬套会显示成不可回答。所以走**独立 RPC** `threads.answerCloudAgent`：卡片上的按钮直接答到 provider，`approvalAction` 作为幂等/防错键（用户看到的动作必须就是正在答的动作）。
 >
-> **审批通道分两步走**：第一步（已做）是**展示层**——设备把正在等待的动作报成 `taskStatus.awaitingApproval`，云端存进 `CloudAgent.awaitingApproval`，卡片显示「要做什么 + 将要输入/执行的全文」。这样任务停在第一次点击时，你在网页或手机上能看见它在等什么。第二步（未做）是把设备确认接到一个真正 `waiting_input` 的 run 上，让网页上能直接点批准——那要改 run 生命周期，因为 `cloud_agent_launch` 现在是「发完就返回」，而设备上的确认发生在任务内部。
+> **审批通道已经走完两步**：第一步是**展示层**——设备把正在等待的动作报成 `taskStatus.awaitingApproval`，云端存进 `CloudAgent.awaitingApproval`，卡片显示「要做什么 + 将要输入/执行的全文」。第二步是**批准本身**——卡上的「Allow once / Deny」直接答到 provider（`threads.answerCloudAgent`），不需要改 run 生命周期。原以为要挂到 `waiting_input` 的 run 上，实际不需要。
 >
 > **为什么 provider 实现了却还没接线**：接线只差两个产品决策，不是管线——(1) 云端下发任务时给哪个 `grant`（预授权放行哪些只读动作、逐次确认的默认档位），(2) 用设备上哪个 `connectionRef`。审批通道已经打通（卡片可显示可批准），所以接线后任务不会再卡在第一个动作上超时；缺的是「默认授权包长什么样」这个决定。届时 `cloudAgent` 依赖从「一个连接」改成按 (spaceId, userId) 解析（§2.2 第 1 点）。
 
