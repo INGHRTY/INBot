@@ -659,20 +659,20 @@ v1 计划里的「静帧 `observe` + 动作 `act`」的**底层原语**（截图
 
 ### 2.9 验收标准（M1）
 
-- [ ] Mac 端未授权屏幕录制时，本地 agent 拒绝 GUI 任务并给出「需要屏幕录制权限」的清晰原因，不静默失败。
+- [x] Mac 端未授权屏幕录制时，本地 agent 拒绝 GUI 任务并给出「需要屏幕录制权限」的清晰原因，不静默失败。（`HostScreen.permissionProblem`，有测试）
 - [ ] 授权后，本地 agent 能在本地浏览器 fixture 上完成「打开 → 点击 → 读取结果」，全程**无图片上行**（用抓包或服务端日志证明）。
 - [ ] 默认档（你的 key 直连）下，屏幕帧从 Mac 直达模型厂商：**Rakazo 服务端日志与数据库中检索不到任何截图字节**。
 - [ ] 不存在「经 Rakazo 代理模型调用」这一档：配置界面里没有这个选项，协议里也没有这个字段。
 - [ ] 授权包为默认全禁时，任务只允许 `read_file` 范围内的只读操作；越界动作产生 `blocked` 事件，云端能看到原因。
-- [ ] **逐次确认生效**：一个不在 `preapproved` 里的点击动作会挂起设备端、在云端弹出显示具体动作的审批卡；批准后执行，拒绝后不执行。
-- [ ] **拒绝有记忆**：用户在一次任务里拒绝过 `type` 动作后，同类 `type` 动作后续直接被拒，不再弹卡。
-- [ ] **`type` 永不被预授权**：即使授权包把某应用列入 `preapproved`，`type` 动作仍走逐次确认，且审批卡显示待输入文本全文。
-- [ ] **网络默认关闭**：`shell` 里的 `curl` 被拒；`web_fetch` 除非 `preapproved` 显式列出 host 否则被拒。
-- [ ] 授权包过期后，本地 agent 立即停止并回报。
+- [x] **逐次确认生效**：一个不在 `preapproved` 里的点击动作会挂起设备端、在云端弹出显示具体动作的审批卡；批准后执行，拒绝后不执行。（有测试，覆盖整条 RPC）
+- [x] **拒绝有记忆**：用户在一次任务里拒绝过 `type` 动作后，同类 `type` 动作后续直接被拒，不再弹卡。（有测试；每次审批另有独立 id，防止旧批准命中新动作）
+- [x] **`type` 永不被预授权**：即使授权包把某应用列入 `preapproved`，`type` 动作仍走逐次确认，且审批卡显示待输入文本全文。（有测试）
+- [x] **网络默认关闭**：`shell` 里的 `curl` 被拒；`web_fetch` 除非 `preapproved` 显式列出 host 否则被拒。（含 `bash -c "curl …"`、`git push`、`python -c` 等绕过，有测试）
+- [x] 授权包过期后，本地 agent 立即停止并回报。（每个动作都判过期，有测试）
 - [x] 菜单栏「停止」在 2 秒内中止本地任务，且后续工具调用全部被拒。（中断走 abort，工具在 `signal` 上停；菜单栏在本机验证过显示与消失）
 - [ ] 本地任务进行中，服务端重启后任务状态可恢复（`CloudAgent` 的 lease/fence 语义已覆盖，需验证）。
-- [ ] provider key 只存在于 Mac Keychain：服务端数据库、API 响应、日志中均检索不到该 key。
-- [ ] 老版本桌面客户端（不认识 `task` 消息）连接时，设备侧忽略该消息，云端在超时后标记任务失败，不崩溃。
+- [x] provider key 只存在于 Mac Keychain：服务端数据库、API 响应、日志中均检索不到该 key。（下发任务里只有 `connectionRef`，有测试）
+- [x] 老版本桌面客户端（不认识 `task` 消息）连接时，设备侧忽略该消息，云端在超时后标记任务失败，不崩溃。（协议测试覆盖两个方向）
 
 ### 2.10 工作量估算
 
@@ -940,19 +940,20 @@ M2 的采集端可以与 M1 主体并行开发。
 | 模型绑定 | **已实现** | `packages/adapters/src/local-agent/model.ts` |
 | 凭据存取（Keychain，云端只见 `connectionRef`） | **已实现** | `apps/desktop/src/device-model-credentials.ts` |
 | 桌面端接线 | **已实现** | `apps/desktop/src/local-task-runner.ts`、`main.ts` |
-| 云端 `LocalDeviceAgentProvider` | **已实现**（未接线，见下） | `packages/adapters/src/local-device-cloud-agent.ts` |
+| 云端 `LocalDeviceAgentProvider` | **已实现并接线** | `packages/adapters/src/local-device-cloud-agent.ts` |
 | 任务结果落库（`CloudAgent.result` 可空列） | **已实现** | `schema.prisma` + 迁移 `20261106120000_cloud_agent_result` |
 | 设备端回答任务状态（`taskStatus`） | **已实现** | `host-computer-protocol.ts`、`user-device-client.ts` |
-| **云端接线（composition root）** | 未开始，**卡在两个产品决策**（见下） | `apps/api`、`apps/worker` |
+| **云端接线（composition root）** | **已实现**（按人解析 provider） | `packages/adapters/src/{cloud-agent-factory,local-device-cloud-agent-factory}.ts`、`apps/api`、`apps/worker` |
 | 卡片显示「在等什么 / 答了什么」 | **已实现** | `apps/web/src/components/CloudAgentCard.tsx` |
 | 逐次确认可点批准（RPC + 按钮） | **已实现** | `threads.answerCloudAgent`、`CloudAgentCard` |
 | 菜单栏状态 + 一键中断 | **已实现**（本机验证） | `apps/desktop/src/task-tray.ts`、`task-tray-icon.ts`、`main.ts` |
+| 权限缺失时说清该开哪个 | **已实现** | `host-screen.ts`、`local-agent/tools.ts` |
 
 > **审批通道不需要挂 run**（实现时修正）：原以为要改 run 生命周期，把设备确认挂到 `waiting_input` 的 run 上。实际不需要——设备确认是 `CloudAgent` 行上的一个属性，而 `answerableAskMessageIds` 只认「有等待中 run 的 ask block」，硬套会显示成不可回答。所以走**独立 RPC** `threads.answerCloudAgent`：卡片上的按钮直接答到 provider，`approvalAction` 作为幂等/防错键（用户看到的动作必须就是正在答的动作）。
 >
 > **审批通道已经走完两步**：第一步是**展示层**——设备把正在等待的动作报成 `taskStatus.awaitingApproval`，云端存进 `CloudAgent.awaitingApproval`，卡片显示「要做什么 + 将要输入/执行的全文」。第二步是**批准本身**——卡上的「Allow once / Deny」直接答到 provider（`threads.answerCloudAgent`），不需要改 run 生命周期。原以为要挂到 `waiting_input` 的 run 上，实际不需要。
 >
-> **为什么 provider 实现了却还没接线**：接线只差两个产品决策，不是管线——(1) 云端下发任务时给哪个 `grant`（预授权放行哪些只读动作、逐次确认的默认档位），(2) 用设备上哪个 `connectionRef`。审批通道已经打通（卡片可显示可批准），所以接线后任务不会再卡在第一个动作上超时；缺的是「默认授权包长什么样」这个决定。届时 `cloudAgent` 依赖从「一个连接」改成按 (spaceId, userId) 解析（§2.2 第 1 点）。
+> **两个决策已经落到代码里，并写明了理由**：(1) 默认授权包是 `localTaskGrant()`——预授权为空、`onDemand: "ask"`、一小时后过期，也就是**每个动作都要问**（读屏幕除外，它不改变任何状态）；(2) 模型不指定 `connectionRef`，由 Mac 用自己的默认连接（只有一条连接时就是它，多条时拒绝猜），云端始终不知道 Mac 上有哪个模型。要放宽预授权，改 `localTaskGrant` 一处即可，设备端仍然强制。
 
 ---
 
