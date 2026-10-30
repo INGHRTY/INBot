@@ -21,6 +21,41 @@ function backend(overrides: Partial<HostScreenBackend> = {}) {
   return { state, injected };
 }
 
+describe("host screen permissions", () => {
+  type Permissions =
+    NonNullable<HostScreenBackend["permissions"]> extends () => infer P ? P : never;
+  const screenWith = (permissions: Permissions) =>
+    new HostScreen({
+      async capture() {
+        return { image: new Uint8Array(), mimeType: "image/png", width: 1, height: 1 };
+      },
+      async inject() {},
+      async frontmost() {
+        return null;
+      },
+      ...(permissions ? { permissions: () => permissions } : {}),
+    });
+
+  it("names the permission to turn on, and nothing when it is granted", () => {
+    const denied = screenWith({ screen: "denied", accessibility: "denied" });
+    expect(denied.permissionProblem(["screen"])).toContain("Screen Recording");
+    expect(denied.permissionProblem(["accessibility"])).toContain("Accessibility");
+    const granted = screenWith({ screen: "granted", accessibility: "granted" });
+    expect(granted.permissionProblem(["screen", "accessibility"])).toBeUndefined();
+  });
+
+  it("does not block a platform that cannot report permissions", () => {
+    // Windows and Linux have no per-application TCC gate, so a missing report is not a denial.
+    expect(new HostScreen(backend().state).permissionProblem(["screen"])).toBeUndefined();
+  });
+
+  it("treats a permission the system has not answered yet as not granted", () => {
+    expect(
+      screenWith({ screen: "unknown", accessibility: "granted" }).permissionProblem(["screen"]),
+    ).toContain("Screen Recording");
+  });
+});
+
 describe("host screen", () => {
   it("captures a frame with the frontmost window", async () => {
     const { state } = backend();

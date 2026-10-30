@@ -90,6 +90,27 @@ describe("local agent tools", () => {
     expect(injected).toHaveLength(1);
   });
 
+  it("says which permission to turn on instead of failing at the first capture", async () => {
+    const { deps: options } = deps();
+    const screen = Object.assign(options.screen, {
+      permissionProblem: (needs: string[]) =>
+        needs.includes("screen")
+          ? "Screen Recording is off for Rakazo."
+          : "Accessibility is off for Rakazo.",
+    });
+    const tools = localAgentTools({ ...options, screen });
+    const observed = await tool("computer_observe", tools).execute("t", {});
+    expect(observed.isError).toBe(true);
+    expect(observed.content[0]).toMatchObject({
+      text: expect.stringContaining("Screen Recording"),
+    });
+    const acted = await tool("computer_act", tools).execute("t", {
+      actions: [{ kind: "click", x: 1, y: 2 }],
+    });
+    expect(acted.isError).toBe(true);
+    expect(acted.content[0]).toMatchObject({ text: expect.stringContaining("Accessibility") });
+  });
+
   it("puts a click in another application to the user", async () => {
     const { deps: options, approve, injected, asked } = deps();
     await tool("computer_act", localAgentTools(options)).execute("t", {

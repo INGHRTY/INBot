@@ -21,11 +21,45 @@ export interface HostWindow {
   title?: string;
 }
 
+/** A permission the system grants per application, not per request. */
+export type HostPermission = "screen" | "accessibility";
+
+export type HostPermissionState = "granted" | "denied" | "unknown";
+
+/** What the platform allows this app to do right now. */
+export type HostPermissions = Record<HostPermission, HostPermissionState>;
+
 /** The platform primitives a host screen is built from. */
 export interface HostScreenBackend {
   capture(): Promise<HostFrame>;
   inject(action: ComputerAction): Promise<void>;
   frontmost(): Promise<HostWindow | null>;
+  /**
+   * What the system currently allows. A task that needs a permission the person has not
+   * granted should say which one, rather than fail at the first capture.
+   */
+  permissions?(): HostPermissions;
+}
+
+/**
+ * A reason the person can act on, or undefined when this computer may proceed.
+ *
+ * Reading the screen needs Screen Recording and acting on it needs Accessibility; both are
+ * granted per application in System Settings, so the message names the one to turn on.
+ */
+export function hostPermissionProblem(
+  permissions: HostPermissions | undefined,
+  needs: readonly HostPermission[],
+): string | undefined {
+  if (!permissions) return undefined;
+  for (const permission of needs) {
+    const state = permissions[permission];
+    if (state === "granted") continue;
+    return permission === "screen"
+      ? "Screen Recording is off for Rakazo. Turn it on in System Settings, Privacy and Security, then run the task again."
+      : "Accessibility is off for Rakazo. Turn it on in System Settings, Privacy and Security, then run the task again.";
+  }
+  return undefined;
 }
 
 export const HOST_SCREEN_DEFAULT_SETTLE_MS = 350;
@@ -37,6 +71,11 @@ export const HOST_SCREEN_MAX_SETTLE_MS = 5_000;
  */
 export class HostScreen {
   constructor(private readonly backend: HostScreenBackend) {}
+
+  /** A reason this computer cannot take the given kind of action, if it cannot. */
+  permissionProblem(needs: readonly HostPermission[]): string | undefined {
+    return hostPermissionProblem(this.backend.permissions?.(), needs);
+  }
 
   async observe(): Promise<ComputerObservation> {
     const frame = await this.backend.capture();

@@ -43,6 +43,13 @@ export function createDesktopHostScreen(): HostScreen {
     async inject(action) {
       await macosInject(toGlobal(action));
     },
+    permissions() {
+      const access = screenRecordingStatus();
+      return {
+        screen: access === "granted" ? "granted" : access === "unknown" ? "unknown" : "denied",
+        accessibility: macosAccessibilityTrusted() ? "granted" : "denied",
+      };
+    },
     async frontmost() {
       return macosFrontmostWindow() ?? null;
     },

@@ -55,6 +55,10 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         "Capture the current screen of this computer. Returns the frame and the window in front. Observe before any coordinate-based action, and again whenever something else may have changed the screen.",
       parameters: Type.Object({}),
       async execute() {
+        // A Mac that has not been given Screen Recording says so, instead of failing at
+        // the capture with a message the person cannot act on.
+        const blocked = deps.screen.permissionProblem(["screen"]);
+        if (blocked) return refused(blocked);
         const observation = await deps.screen.observe();
         return {
           content: observationContent(observation),
@@ -92,6 +96,8 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         observe: Type.Optional(Type.Boolean()),
       }),
       async execute(_id, params) {
+        const blocked = deps.screen.permissionProblem(["accessibility"]);
+        if (blocked) return refused(blocked);
         const raw = (params as { actions?: unknown }).actions;
         let actions: ComputerAction[];
         try {
