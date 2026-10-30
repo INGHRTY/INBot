@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -348,12 +349,24 @@ async function gate(
       reason: "The user declined this kind of action earlier in this task.",
     };
   }
-  const answer = await deps.approve({ ...request, approvalId: pattern });
+  // The id names this one pending action, not the kind: a stale "allow" meant for an
+  // earlier click must not approve a later one.
+  const answer = await deps.approve({ ...request, approvalId: approvalIdFor(pattern) });
   if (!answer.allowed) {
     deps.deniedPatterns.add(pattern);
     return { outcome: "refused", reason: answer.reason ?? "The user declined this action." };
   }
   return { outcome: "allowed" };
+}
+
+/**
+ * A fresh id for one pending approval.
+ *
+ * The refusal memory keys on the action's pattern, but an answer must reach the exact
+ * action the person was shown, so each request gets its own id.
+ */
+function approvalIdFor(pattern: string): string {
+  return `${pattern}#${randomUUID().slice(0, 8)}`.slice(0, 64);
 }
 
 /** The shape of an action, so a refusal covers the same kind of action and not just one. */

@@ -96,7 +96,9 @@ describe("local agent tools", () => {
       actions: [{ kind: "click", x: 10, y: 20 }],
     });
     expect(approve).toHaveBeenCalledOnce();
-    expect(asked).toEqual(["click@Safari"]);
+    // The id names this one pending click, so a stale answer cannot reach a later one.
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/^click@Safari#/);
     expect(injected).toHaveLength(1);
   });
 
@@ -137,6 +139,24 @@ describe("local agent tools", () => {
     expect(approve).not.toHaveBeenCalled();
     expect(injected).toHaveLength(0);
     expect(result.isError).toBe(true);
+  });
+
+  it("gives each pending approval its own id, so a stale allow cannot reach another", async () => {
+    const { deps: options } = deps();
+    const asked: string[] = [];
+    const tools = localAgentTools({
+      ...options,
+      approve: async (request) => {
+        asked.push(request.approvalId);
+        return { approvalId: request.approvalId, allowed: true };
+      },
+    });
+    await tool("computer_act", tools).execute("t", { actions: [{ kind: "click", x: 1, y: 2 }] });
+    await tool("computer_act", tools).execute("t", { actions: [{ kind: "click", x: 3, y: 4 }] });
+    expect(asked).toHaveLength(2);
+    expect(asked[0]).not.toBe(asked[1]);
+    // Both still name the same kind of action, which is what a refusal is remembered by.
+    expect(asked.every((id) => id.startsWith("click@Safari#"))).toBe(true);
   });
 
   it("does not ask again about an action the user refused", async () => {
