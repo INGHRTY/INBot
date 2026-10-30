@@ -110,6 +110,7 @@ describe("remote computer access", () => {
           token,
           closed: false,
           cancelled: 0,
+          stoppedTasks: 0,
           revoke: events.onRevoked,
           authorize: events.authorize,
         };
@@ -120,6 +121,9 @@ describe("remote computer access", () => {
           },
           cancelAll: () => {
             client.cancelled += 1;
+          },
+          stopTasks: () => {
+            client.stoppedTasks += 1;
           },
         };
       },
@@ -202,6 +206,16 @@ describe("remote computer access", () => {
     await access.setAllowed(origin, false);
     expect(clients).toMatchObject([{ closed: false, cancelled: 1 }]);
     expect(await clients[0]!.authorize()).toBe(false);
+  });
+
+  it("stops a task without turning access off", async () => {
+    await saveDeviceConsent(userData, origin, "allowed");
+    const { access, clients } = setup();
+    await access.select(origin);
+    await access.pair();
+    access.stopTasks();
+    expect(clients).toMatchObject([{ closed: false, cancelled: 0, stoppedTasks: 1 }]);
+    expect(access.state(origin)).toEqual({ deviceId: "device-1", allowed: true });
   });
 
   it("ignores a prompt answered after access was turned off or revoked", async () => {

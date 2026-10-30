@@ -1,6 +1,11 @@
 import type { ProcessEvent } from "@rakazo/adapter-kit";
 import type { HostComputerEnvironment, HostComputerRequest } from "./host-computer-protocol.js";
-import type { UserDevice, UserDeviceGateway } from "./user-device-protocol.js";
+import type { LocalAgentTask } from "./local-agent/task-protocol.js";
+import type {
+  UserDevice,
+  UserDeviceGateway,
+  UserDeviceTaskHandle,
+} from "./user-device-protocol.js";
 
 export const USER_DEVICE_EMULATOR_OUTPUT = "fixture-mac\n";
 
@@ -17,6 +22,21 @@ export class UserDeviceEmulator implements UserDeviceGateway {
 
   async hasDevice(_userId: string): Promise<boolean> {
     return true;
+  }
+
+  /** The emulator answers commands only, so there is never a task to tell anything. */
+  async taskCommand(): Promise<boolean> {
+    return false;
+  }
+
+  /** The emulator answers commands only; a task would need a real computer to run on. */
+  async task(
+    _userId: string,
+    _task: LocalAgentTask,
+    _signal: AbortSignal,
+    _deviceId?: string,
+  ): Promise<UserDeviceTaskHandle> {
+    throw new Error("Tasks are not emulated");
   }
 
   async *request<T>(

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { ORPCError } from "@orpc/server";
 import {
   aiRecipient,
-  cloudAgentsEnabled,
+  type CloudAgentProviders,
   parseModelSecret,
+  resolveCloudAgent,
   resolveMemberMainModel,
   selectConfiguredModel,
   toStringRecord,
@@ -239,13 +240,12 @@ export async function aiConsentStatus(
         baseUrl: toStringRecord(memory.settings).baseUrl,
       }),
     );
-  if (
-    uses.includes("model") &&
-    deps.cloudAgent &&
-    cloudAgentsEnabled(deps.cloudAgent, actor.spaceId) &&
-    !deps.cloudAgent.provider.describe().capabilities.offline
-  ) {
-    add(aiRecipient({ provider: deps.cloudAgent.provider.describe().id, use: "model" }));
+  if (uses.includes("model") && deps.cloudAgent) {
+    const providers = deps.cloudAgent as unknown as CloudAgentProviders | null | undefined;
+    const provider = await resolveCloudAgent(providers, actor.spaceId, actor.userId);
+    // A provider that never leaves this process sends nothing to a vendor to disclose.
+    if (provider && !provider.provider.describe().capabilities.offline)
+      add(aiRecipient({ provider: provider.provider.describe().id, use: "model" }));
   }
   return {
     scope: createHash("sha256")

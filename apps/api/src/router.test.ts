@@ -1067,6 +1067,130 @@ describe("secret request dismissal", () => {
   });
 });
 
+describe("threads.answerCloudAgent", () => {
+  function setup(agent: Record<string, unknown> | null) {
+    const decide = vi.fn(async () => true);
+    const provider = Object.assign(
+      new adapters.LocalDeviceCloudAgentProvider({
+        devices: {} as never,
+        deviceId: "device-1",
+        grant: () => ({
+          preapproved: {},
+          onDemand: "ask",
+          denied: {},
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        }),
+      }),
+      { decide },
+    );
+    const connection = { provider, key: "local-device:device-1" };
+    const prisma = {
+      bot: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "bot-1",
+          thread: { id: "thread-1" },
+          computer: null,
+        }),
+      },
+      cloudAgent: { findFirst: vi.fn().mockResolvedValue(agent) },
+    } as unknown as PrismaClient;
+    const deps = {
+      prisma,
+      cloudAgent: {
+        forUser: async () => connection,
+        available: async () => true,
+        keyFor: async () => connection.key,
+        forKey: async () => connection,
+        keys: () => ({ exact: [], prefixes: ["local-device:"] }),
+      },
+      env: {
+        defaultProvider: "fake",
+        defaultModel: "fake-model",
+        webOrigin: "http://127.0.0.1:5173",
+        screenProxySecret: "fake-test-secret",
+        sandboxProvider: "fake",
+      },
+      dataDir: "/tmp/rakazo-router-test",
+    } as unknown as RouterDeps;
+    const actor = {
+      spaceId: "workspace-1",
+      userId: "user-1",
+      email: "user@rakazo.test",
+      isDeploymentOwner: true,
+    } satisfies Actor;
+    const handler = new RPCHandler(createRouter(deps));
+    const call = (json: Record<string, unknown>) =>
+      handler.handle(
+        new Request("http://127.0.0.1/rpc/threads/answerCloudAgent", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: { botId: "bot-1", ...json } }),
+        }),
+        { prefix: "/rpc", context: { actor } },
+      );
+    return { call, decide };
+  }
+
+  const waiting = {
+    id: "agent-1",
+    status: "running",
+    awaitingApproval: {
+      approvalId: "type#1a2b3c4d",
+      action: "type",
+      summary: "Type in Safari",
+    },
+  };
+
+  it("answers the exact action the card showed, by the computer's own id", async () => {
+    const { call, decide } = setup(waiting);
+    const { response } = await call({
+      agentId: "agent-1",
+      approvalAction: "type",
+      allowed: true,
+    });
+    expect(response?.status).toBe(200);
+    // The id, not the action name, is what the computer is waiting on.
+    expect(decide).toHaveBeenCalledWith(
+      "agent-1",
+      { approvalId: "type#1a2b3c4d", allowed: true },
+      expect.anything(),
+    );
+  });
+
+  it("refuses an answer meant for an action the card no longer shows", async () => {
+    const { call, decide } = setup(waiting);
+    const { response } = await call({
+      agentId: "agent-1",
+      approvalAction: "click",
+      allowed: true,
+    });
+    expect(response?.status).toBe(409);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("refuses to answer a task that is no longer waiting", async () => {
+    const { call, decide } = setup({ ...waiting, status: "finished" });
+    const { response } = await call({
+      agentId: "agent-1",
+      approvalAction: "type",
+      allowed: false,
+    });
+    expect(response?.status).toBe(409);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("refuses an agent belonging to another person or thread", async () => {
+    const { call, decide } = setup(null);
+    const { response } = await call({
+      agentId: "agent-1",
+      approvalAction: "type",
+      allowed: true,
+    });
+    expect(response?.status).toBe(409);
+    expect(decide).not.toHaveBeenCalled();
+  });
+});
+
 describe("thread stream authorization", () => {
   afterEach(() => {
     vi.useRealTimers();

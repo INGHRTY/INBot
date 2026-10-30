@@ -5,7 +5,11 @@ import {
   USER_DEVICE_DISCONNECT_PATH,
   USER_DEVICE_FORWARD_PATH,
   USER_DEVICE_LIMIT,
+  USER_DEVICE_TASK_COMMAND_PATH,
+  USER_DEVICE_TASK_PATH,
   userDeviceForwardBody,
+  userDeviceTaskBody,
+  userDeviceTaskCommandBody,
   validUserDeviceForwardSecret,
 } from "@rakazo/adapters";
 import type { UserDeviceList, UserDevicePairResponse } from "@rakazo/contracts";
@@ -21,6 +25,7 @@ import type { Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
 
 const FORWARD_BODY_MAX_BYTES = 13 * 1024 * 1024;
+const TASK_BODY_MAX_BYTES = 256 * 1024;
 
 export interface UserDeviceRouteDeps {
   prisma: PrismaClient;
@@ -122,6 +127,29 @@ export function mountUserDeviceRoutes(app: Hono, deps: UserDeviceRouteDeps) {
     if (!input.success) return c.json({ error: "Invalid request" }, 400);
     const { request, ...route } = input.data;
     return deps.hub.stream(route, request, c.req.raw.signal);
+  });
+
+  app.post(USER_DEVICE_TASK_PATH, async (c) => {
+    if (!validUserDeviceForwardSecret(deps.forwardSecret, c.req.header("authorization")))
+      return c.json({ error: "Unauthorized" }, 401);
+    const body = await readBoundedBody(c.req.raw, TASK_BODY_MAX_BYTES);
+    if (body === null) return c.json({ error: "Request too large" }, 413);
+    const input = userDeviceTaskBody.safeParse(parseJson(body));
+    if (!input.success) return c.json({ error: "Invalid request" }, 400);
+    const { task, id, ...route } = input.data;
+    return deps.hub.taskStream(route, id, task, c.req.raw.signal);
+  });
+
+  app.post(USER_DEVICE_TASK_COMMAND_PATH, async (c) => {
+    if (!validUserDeviceForwardSecret(deps.forwardSecret, c.req.header("authorization")))
+      return c.json({ error: "Unauthorized" }, 401);
+    const body = await readBoundedBody(c.req.raw, TASK_BODY_MAX_BYTES);
+    if (body === null) return c.json({ error: "Request too large" }, 413);
+    const input = userDeviceTaskCommandBody.safeParse(parseJson(body));
+    if (!input.success) return c.json({ error: "Invalid request" }, 400);
+    const { command, id, ...route } = input.data;
+    const applied = deps.hub.taskCommand(route, id, command);
+    return c.body(null, applied ? 204 : 404);
   });
 
   app.post(USER_DEVICE_DISCONNECT_PATH, async (c) => {

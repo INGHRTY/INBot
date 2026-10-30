@@ -19,6 +19,10 @@ function setup(execute: (signal: AbortSignal) => AsyncIterable<unknown>, secrets
   const gateway: UserDeviceGateway = {
     connected: async () => ({ deviceId: "device-1", name: "Laptop", platform: "darwin" }),
     hasDevice: async () => true,
+    task: async () => {
+      throw new Error("Tasks are not used here");
+    },
+    taskCommand: async () => false,
     async *request<T>(
       _userId: string,
       request: HostComputerRequest,

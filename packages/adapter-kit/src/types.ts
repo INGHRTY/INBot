@@ -1129,6 +1129,11 @@ export interface CloudAgentCapabilities {
   cancel: boolean;
   /** True when the adapter never leaves the process (tests / Playwright). */
   offline?: boolean;
+  /**
+   * True when a reply continues the same run instead of starting a new one, so the
+   * follow-up is accepted as soon as it is delivered.
+   */
+  replyInPlace?: boolean;
 }
 
 export type CloudAgentImage = { data: string; mimeType: string } | { url: string };
@@ -1160,6 +1165,28 @@ export interface CloudAgentSnapshot {
   branch?: string;
   prUrl?: string;
   latestRunId?: string;
+  /**
+   * What the agent answered. A remote coding agent's answer is its pull request; an
+   * agent running on the person's own computer answers with text, and nothing else
+   * carries it.
+   */
+  result?: string;
+  /**
+   * The last action a task on someone's own computer refused to take, and why, so the
+   * cloud can tell the person. The screen it would have touched never leaves the computer.
+   */
+  blockedReason?: string;
+  /**
+   * The action the agent is waiting to be allowed to take. A task on someone's own
+   * computer stops at an action it may not take alone, and this is what it stopped at.
+   */
+  awaitingApproval?: {
+    /** The id the computer is waiting on. An answer must carry this exact one. */
+    approvalId: string;
+    action: string;
+    summary: string;
+    detail?: string;
+  };
 }
 
 export interface CloudAgentReplyRequest {

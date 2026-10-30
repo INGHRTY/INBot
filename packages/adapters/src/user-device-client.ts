@@ -4,6 +4,12 @@ import type { HostComputerFrame } from "./host-computer-protocol.js";
 import { HOST_COMPUTER_MAX_BYTES } from "./host-computer-protocol.js";
 import type { HostComputerCall } from "./host-computer-runner.js";
 import { createHostComputerRunner } from "./host-computer-runner.js";
+import type {
+  ActionApprovalDecision,
+  ActionApprovalRequest,
+} from "./local-agent/grant-protocol.js";
+import type { LocalAgentTask, TaskEvent, TaskStatus } from "./local-agent/task-protocol.js";
+import { isTerminalTaskEvent } from "./local-agent/task-protocol.js";
 import type { UserDeviceClientMessage } from "./user-device-protocol.js";
 import { userDeviceServerMessage } from "./user-device-protocol.js";
 
@@ -12,6 +18,36 @@ export const USER_DEVICE_MAX_MESSAGE_BYTES = HOST_COMPUTER_MAX_BYTES + 4096;
 const PING_INTERVAL_MS = 30_000;
 const BUSY_MESSAGE = "Local computer is busy. Try again shortly.";
 const NOT_ALLOWED_MESSAGE = "Not allowed on this computer";
+const NO_TASKS_MESSAGE = "This computer cannot run tasks yet.";
+/** How long the computer waits for an answer before treating it as a refusal. */
+const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+
+/** What a running task can do while it runs. */
+export interface UserDeviceTaskControl {
+  /** Aborted when the task is cancelled or the connection drops. */
+  signal: AbortSignal;
+  /** Reports progress to the cloud. */
+  event(event: TaskEvent): void;
+  /** Asks the user to approve one action and waits for the answer. */
+  approve(request: ActionApprovalRequest): Promise<ActionApprovalDecision>;
+  /** Waits for the next instruction from the cloud, or undefined when the task ends. */
+  nextInstruction(): Promise<string | undefined>;
+}
+
+export interface UserDeviceTaskResult {
+  answer: string;
+  summary?: string;
+}
+
+/** Runs one task on this computer. The cloud only sees what the task reports. */
+export interface UserDeviceTaskRunner {
+  run(task: LocalAgentTask, control: UserDeviceTaskControl): Promise<UserDeviceTaskResult>;
+}
+
+/** What this computer knows about the tasks it was given, so a request can ask. */
+export interface UserDeviceTaskReader {
+  status(taskId: string): TaskStatus | undefined;
+}
 
 export interface UserDeviceClientOptions {
   serverUrl: string;
@@ -21,7 +57,35 @@ export interface UserDeviceClientOptions {
   onRevoked: () => void;
   /** Whether this computer lets the server's bots run anything. Asked before every request. */
   authorize: () => Promise<boolean>;
+  /** Runs tasks the cloud sends. Without one the device reports that it cannot run them. */
+  runTask?: UserDeviceTaskRunner;
+  /**
+   * How long to wait for an answer to a permission request. A question nobody answers is
+   * a refusal, so this bounds how long the computer sits stopped.
+   */
+  approvalTimeoutMs?: number;
+  /** Told when a task starts and when it ends, so the app can show that this computer is busy. */
+  onTask?: (task: { taskId: string; running: boolean }) => void;
   retryMs?: { min: number; max: number };
+}
+
+/** One task in flight on this computer. */
+interface RunningTask {
+  controller: AbortController;
+  /** Instructions the cloud sent that the task has not read yet. */
+  instructions: string[];
+  /** Resolvers waiting for the next instruction. */
+  waiting: ((text: string | undefined) => void)[];
+  /** Resolvers waiting for the user's answer. */
+  approvals: Map<
+    string,
+    { approvalId: string; resolve: (decision: ActionApprovalDecision) => void }
+  >;
+  finished: boolean;
+  /** How many actions the task has reported. */
+  steps: number;
+  /** The last action it refused to take, so a status request can explain it. */
+  blocked?: { at: string; reason: string };
 }
 
 /**
@@ -31,8 +95,23 @@ export interface UserDeviceClientOptions {
  */
 export function startUserDeviceClient(options: UserDeviceClientOptions) {
   const retry = options.retryMs ?? { min: 1_000, max: 60_000 };
-  const runner = createHostComputerRunner({ root: options.root });
+  /** Every task this computer ran, so a status request can answer for one. */
+  const taskStatuses = new Map<string, TaskStatus>();
+  const taskReader: UserDeviceTaskReader = {
+    status(taskId) {
+      const known = taskStatuses.get(taskId);
+      return known ? { ...known } : undefined;
+    },
+  };
+  const runner = createHostComputerRunner({ root: options.root, tasks: taskReader });
   runner.setEnabled(true);
+  function notifyTask(taskId: string, running: boolean) {
+    try {
+      options.onTask?.({ taskId, running });
+    } catch {
+      // A listener that throws must not stop the task from running.
+    }
+  }
   const url = new URL(USER_DEVICE_CONNECT_PATH, options.serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   let stopped = false;
@@ -40,22 +119,30 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
   let socket: WebSocket | undefined;
   let reconnectTimer: NodeJS.Timeout | undefined;
   let refuseWaiting: (() => void) | undefined;
+  /** Stops the tasks running on the current connection, without dropping the connection. */
+  let abortTasks: (() => void) | undefined;
 
   function stop() {
     if (stopped) return;
     stopped = true;
     clearTimeout(reconnectTimer);
     runner.close();
+    abortTasks = undefined;
     socket?.terminate();
+  }
+
+  /** Stops every task this computer is running. The connection stays open and keeps serving. */
+  function stopTasks() {
+    abortTasks?.();
   }
 
   function cancelAll() {
     if (stopped) return;
     refuseWaiting?.();
+    abortTasks?.();
     runner.setEnabled(false);
     runner.setEnabled(true);
   }
-
   function revoked() {
     if (stopped) return;
     stop();
@@ -86,6 +173,9 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       { call: HostComputerCall; cancelled: boolean; settled: boolean }
     >();
     const authorizing = new Set<string>();
+    const runningTasks = new Map<string, RunningTask>();
+    /** The result of a task that already ran, so a repeat does not run it again. */
+    const completed = new Map<string, TaskEvent>();
     let alive = true;
     let openedAt = 0;
     let ping: NodeJS.Timeout | undefined;
@@ -93,6 +183,9 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       for (const id of authorizing)
         void send(id, { error: NOT_ALLOWED_MESSAGE }).catch(() => undefined);
       authorizing.clear();
+    };
+    abortTasks = () => {
+      for (const task of runningTasks.values()) task.controller.abort();
     };
 
     ws.on("unexpected-response", (request, response) => {
@@ -124,9 +217,13 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       // A lost response is never retried, so in-flight work stops with the connection.
       for (const { call } of calls.values()) call.abort();
       calls.clear();
+      // A task that loses its connection cannot report anything, so it stops here.
+      for (const task of runningTasks.values()) task.controller.abort();
+      runningTasks.clear();
       if (socket === ws) {
         socket = undefined;
         refuseWaiting = undefined;
+        abortTasks = undefined;
       }
       if (openedAt && Date.now() - openedAt >= PING_INTERVAL_MS) attempt = 0;
       scheduleReconnect();
@@ -144,6 +241,26 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       }
       if (message.type === "revoked") {
         revoked();
+        return;
+      }
+      if (message.type === "task") {
+        void startTask(message.id, message.task);
+        return;
+      }
+      if (message.type === "taskReply") {
+        const task = runningTasks.get(message.id);
+        if (task) deliverInstruction(task, message.text);
+        return;
+      }
+      if (message.type === "taskCancel") {
+        runningTasks.get(message.id)?.controller.abort();
+        return;
+      }
+      if (message.type === "taskDecision") {
+        runningTasks
+          .get(message.id)
+          ?.approvals.get(message.decision.approvalId)
+          ?.resolve(message.decision);
         return;
       }
       if (message.type === "cancel") {
@@ -210,10 +327,235 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         if (calls.get(id) === entry) calls.delete(id);
       }
     }
+
+    function sendTaskMessage(message: UserDeviceClientMessage) {
+      const body = JSON.stringify(message);
+      if (Buffer.byteLength(body) > USER_DEVICE_MAX_MESSAGE_BYTES) {
+        return Promise.reject(new Error("Local computer response is too large"));
+      }
+      return new Promise<void>((resolve, reject) => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          reject(new Error("Local computer disconnected"));
+          return;
+        }
+        ws.send(body, (error) => (error ? reject(error) : resolve()));
+      });
+    }
+
+    /**
+     * Runs one task. A task id that already ran replays its result instead of running
+     * again, so a repeated dispatch never does the work twice.
+     */
+    async function startTask(id: string, task: LocalAgentTask) {
+      const previous = completed.get(task.taskId);
+      if (previous) {
+        await sendTaskMessage({ type: "taskEvent", id, event: previous }).catch(() => undefined);
+        return;
+      }
+      // The task is registered before anything is awaited, so a cancel that arrives while
+      // the computer is still asking the user is not lost.
+      const running: RunningTask = {
+        controller: new AbortController(),
+        instructions: [],
+        waiting: [],
+        approvals: new Map(),
+        finished: false,
+        steps: 0,
+      };
+      runningTasks.set(id, running);
+      taskStatuses.set(task.taskId, { taskId: task.taskId, state: "running" });
+      notifyTask(task.taskId, true);
+      const control: UserDeviceTaskControl = {
+        signal: running.controller.signal,
+        event(event) {
+          if (isTerminalTaskEvent(event)) {
+            running.finished = true;
+            completed.set(task.taskId, event);
+            taskStatuses.set(
+              task.taskId,
+              statusFrom(task.taskId, event, running.steps, running.blocked),
+            );
+          } else if (event.kind === "step") {
+            running.steps += 1;
+          } else if (event.kind === "blocked") {
+            running.blocked = { at: event.at, reason: event.reason };
+            const known = taskStatuses.get(task.taskId);
+            if (known) taskStatuses.set(task.taskId, { ...known, blocked: running.blocked });
+          }
+          void sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
+        },
+        async approve(request) {
+          const answer = new Promise<ActionApprovalDecision>((resolve) => {
+            running.approvals.set(request.approvalId, { approvalId: request.approvalId, resolve });
+          });
+          // A status request while the person decides shows what they are deciding.
+          const known = taskStatuses.get(task.taskId);
+          if (known) {
+            taskStatuses.set(task.taskId, {
+              ...known,
+              awaitingApproval: {
+                approvalId: request.approvalId,
+                action: request.action,
+                summary: request.summary,
+                ...(request.detail ? { detail: request.detail } : {}),
+              },
+            });
+          }
+          await sendTaskMessage({ type: "taskApproval", id, request }).catch(() => undefined);
+          // The cloud owns the card. If it never answers, the task stops rather than
+          // holding the computer's screen forever.
+          const decision = await Promise.race([
+            answer,
+            aborted(running.controller.signal).then(() => undefined),
+            timeout(options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS).then(() => undefined),
+          ]);
+          running.approvals.delete(request.approvalId);
+          const after = taskStatuses.get(task.taskId);
+          if (after) {
+            const { awaitingApproval: _awaiting, ...rest } = after;
+            taskStatuses.set(task.taskId, rest);
+          }
+          // A cancelled task refuses rather than waits for an answer that will not come.
+          return decision ?? { approvalId: request.approvalId, allowed: false };
+        },
+        nextInstruction() {
+          const queued = running.instructions.shift();
+          if (queued !== undefined) return Promise.resolve(queued);
+          if (running.finished || running.controller.signal.aborted) {
+            return Promise.resolve(undefined);
+          }
+          return new Promise((resolve) => running.waiting.push(resolve));
+        },
+      };
+      try {
+        const allowed = await options.authorize().catch(() => false);
+        if (running.controller.signal.aborted) return;
+        if (!allowed) {
+          await sendTaskMessage({
+            type: "taskEvent",
+            id,
+            event: { kind: "failed", at: new Date().toISOString(), error: NOT_ALLOWED_MESSAGE },
+          }).catch(() => undefined);
+          return;
+        }
+        const runner = options.runTask;
+        if (!runner) {
+          await sendTaskMessage({
+            type: "taskEvent",
+            id,
+            event: { kind: "failed", at: new Date().toISOString(), error: NO_TASKS_MESSAGE },
+          }).catch(() => undefined);
+          return;
+        }
+        const result = await runner.run(task, control);
+        const event: TaskEvent = {
+          kind: "finished",
+          at: new Date().toISOString(),
+          answer: result.answer,
+          ...(result.summary ? { summary: result.summary } : {}),
+        };
+        if (!running.finished) {
+          running.finished = true;
+          completed.set(task.taskId, event);
+          taskStatuses.set(
+            task.taskId,
+            statusFrom(task.taskId, event, running.steps, running.blocked),
+          );
+          await sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
+        }
+      } catch (error) {
+        const event: TaskEvent = {
+          kind: "failed",
+          at: new Date().toISOString(),
+          error: error instanceof Error ? error.message : "The task failed",
+        };
+        if (!running.finished) {
+          running.finished = true;
+          completed.set(task.taskId, event);
+          taskStatuses.set(
+            task.taskId,
+            statusFrom(task.taskId, event, running.steps, running.blocked),
+          );
+          await sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
+        }
+      } finally {
+        // Nobody waits for an answer to a task that is over.
+        for (const resolve of running.waiting.splice(0)) resolve(undefined);
+        for (const pending of running.approvals.values()) {
+          pending.resolve({ approvalId: pending.approvalId, allowed: false });
+        }
+        running.approvals.clear();
+        if (runningTasks.get(id) === running) runningTasks.delete(id);
+        notifyTask(task.taskId, false);
+      }
+    }
   }
 
   connect();
-  return { close: stop, cancelAll };
+  return { close: stop, cancelAll, stopTasks };
+}
+
+/**
+ * What a finished task looks like to a status request.
+ *
+ * The answer travels through the event the cloud already got; a status request from
+ * another process has to be told the same thing again.
+ */
+function statusFrom(
+  taskId: string,
+  event: TaskEvent,
+  steps: number,
+  blocked?: TaskStatus["blocked"],
+): TaskStatus {
+  if (event.kind === "finished") {
+    return {
+      taskId,
+      state: "finished",
+      answer: event.answer,
+      ...(steps ? { steps } : {}),
+      ...(blocked ? { blocked } : {}),
+    };
+  }
+  if (event.kind === "failed") {
+    return {
+      taskId,
+      state: "failed",
+      error: event.error,
+      ...(steps ? { steps } : {}),
+      ...(blocked ? { blocked } : {}),
+    };
+  }
+  return { taskId, state: "running", ...(steps ? { steps } : {}), ...(blocked ? { blocked } : {}) };
+}
+
+/** Hands an instruction to a task, or to whoever is waiting for one. */
+function deliverInstruction(task: RunningTask, text: string) {
+  const waiting = task.waiting.shift();
+  if (waiting) {
+    waiting(text);
+    return;
+  }
+  task.instructions.push(text);
+}
+
+/** Resolves after a delay, so a waiting approval does not hang forever. */
+function timeout(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+/** Rejects when the task is cancelled, so a waiting approval does not hang. */
+function aborted(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error("The task was cancelled"));
+  return new Promise((_, reject) => {
+    signal.addEventListener(
+      "abort",
+      () => reject(signal.reason ?? new Error("The task was cancelled")),
+      { once: true },
+    );
+  });
 }
 
 export type UserDeviceClient = ReturnType<typeof startUserDeviceClient>;

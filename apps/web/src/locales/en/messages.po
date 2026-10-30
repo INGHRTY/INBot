@@ -568,6 +568,10 @@ msgstr "Add item"
 msgid "Add MCP server"
 msgstr "Add MCP server"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Add model"
+msgstr "Add model"
+
 #: src/pages/ScratchpadSection.tsx
 msgid "Add open work"
 msgstr "Add open work"
@@ -674,6 +678,7 @@ msgid "Allow for this chat"
 msgstr "Allow for this chat"
 
 #: src/components/AskCard.tsx
+#: src/components/CloudAgentCard.tsx
 msgid "Allow once"
 msgstr "Allow once"
 
@@ -779,6 +784,7 @@ msgid "Any model, with your own key"
 msgstr "Any model, with your own key"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/lib/localized-provider-hint.ts
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/model-settings/compatible-key-field.tsx
@@ -2161,6 +2167,10 @@ msgstr "Could not save that voice"
 msgid "Could not save the credential"
 msgstr "Could not save the credential"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Could not save the model."
+msgstr "Could not save the model."
+
 #: src/pages/shell/message-cards.tsx
 msgid "Could not save this choice"
 msgstr "Could not save this choice"
@@ -2506,6 +2516,7 @@ msgid "Denied"
 msgstr "Denied"
 
 #: src/components/AskCard.tsx
+#: src/components/CloudAgentCard.tsx
 msgid "Deny"
 msgstr "Deny"
 
@@ -3758,6 +3769,7 @@ msgstr "Missed call"
 msgid "Mode"
 msgstr "Mode"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
 #: src/pages/model-settings/model-picker.tsx
@@ -4285,6 +4297,10 @@ msgstr "OpenClaw or Hermes"
 msgid "Optional"
 msgstr "Optional"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Optional for a model on this Mac"
+msgstr "Optional for a model on this Mac"
+
 #: src/pages/McpServersOverlay.tsx
 msgid "Optional header value"
 msgstr "Optional header value"
@@ -4535,6 +4551,7 @@ msgstr "Program: {name}"
 msgid "Protected input"
 msgstr "Protected input"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -4577,6 +4594,10 @@ msgstr "Reactions"
 #: src/pages/shell/bot-panel.tsx
 msgid "Read replies aloud"
 msgstr "Read replies aloud"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Reads screenshots"
+msgstr "Reads screenshots"
 
 #: src/pages/shell/import-status.ts
 msgid "Ready"
@@ -4746,8 +4767,10 @@ msgid "Remove"
 msgstr "Remove"
 
 #. placeholder {0}: attachment.file.name
+#. placeholder {0}: connection.label
 #. placeholder {0}: device.name
 #: src/components/ComputerDeviceSettings.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/shell/composer.tsx
 msgid "Remove {0}"
 msgstr "Remove {0}"
@@ -5044,6 +5067,7 @@ msgid "Saturday"
 msgstr "Saturday"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/SkillDraftCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
@@ -5265,6 +5289,7 @@ msgstr "Serenity endpoint is required."
 msgid "Server name"
 msgstr "Server name"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
@@ -5744,6 +5769,10 @@ msgstr "The browser keeps dropping the microphone. Start dictation again to retr
 msgid "The connection timed out."
 msgstr "The connection timed out."
 
+#: src/components/DeviceModelSettings.tsx
+msgid "The key is stored on this Mac only."
+msgstr "The key is stored on this Mac only."
+
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
 msgid "The model hit its output limit before finishing its reply."
@@ -5875,6 +5904,10 @@ msgstr "This import was already used. Choose the files again."
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
 msgstr "this Mac"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "This Mac's model"
+msgstr "This Mac's model"
 
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
@@ -6180,6 +6213,11 @@ msgstr "Usage"
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Use {0}"
 msgstr "Use {0}"
+
+#. placeholder {0}: connection.label
+#: src/components/DeviceModelSettings.tsx
+msgid "Use {0} for tasks"
+msgstr "Use {0} for tasks"
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "Use {hostLabel}"

@@ -323,6 +323,15 @@ describeWithDatabase("API authorization and resource isolation", () => {
           answer: "Nope",
         },
       ],
+      [
+        "threads/answerCloudAgent",
+        {
+          botId: "missing-bot",
+          agentId: "missing-agent",
+          approvalAction: "click",
+          allowed: true,
+        },
+      ],
       ["threads/markRead", { botId: "missing-bot" }],
       ["threads/markUnread", { botId: "missing-bot" }],
       ["threads/head"],
@@ -664,6 +673,15 @@ describeWithDatabase("API authorization and resource isolation", () => {
           answer: "intruder answer",
         },
       ],
+      [
+        "threads/answerCloudAgent",
+        {
+          botId: ownerBot.id,
+          agentId: "missing-agent",
+          approvalAction: "click",
+          allowed: true,
+        },
+      ],
       ["threads/markRead", { botId: ownerBot.id }],
       ["threads/markUnread", { botId: ownerBot.id }],
       ["computer/status", { botId: ownerBot.id }],
@@ -728,6 +746,13 @@ describeWithDatabase("API authorization and resource isolation", () => {
       runId: ownerRun.id,
       messageId: "missing-message",
       answer: "mixed-resource attack",
+    });
+    // Nor approve an action for a task on a computer they cannot reach.
+    await expectDenied(app, intruder, "threads/answerCloudAgent", {
+      botId: ownerBot.id,
+      agentId: "missing-agent",
+      approvalAction: "click",
+      allowed: true,
     });
 
     const resourceIdCalls = [

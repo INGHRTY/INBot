@@ -9,7 +9,7 @@ import { USER_DEVICE_CONNECT_PATH } from "@rakazo/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
 import { WebSocketServer } from "ws";
-import type { UserDeviceClient } from "./user-device-client.js";
+import type { UserDeviceClient, UserDeviceTaskRunner } from "./user-device-client.js";
 import { startUserDeviceClient, USER_DEVICE_MAX_MESSAGE_BYTES } from "./user-device-client.js";
 
 const token = "device-token";
@@ -327,5 +327,352 @@ describe("user device client", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const localTask = {
+  taskId: "task-1",
+  prompt: "Open Safari",
+  botId: "bot-1",
+  grant: {
+    preapproved: {},
+    onDemand: "ask",
+    denied: {},
+    expiresAt: "2030-01-01T00:00:00.000Z",
+  },
+  model: { provider: "openai-compatible", id: "gpt" },
+  budget: { maxSteps: 10, maxSeconds: 300 },
+};
+
+describe("device tasks", () => {
+  let root: string;
+  let http: ReturnType<typeof createServer>;
+  let wss: WebSocketServer;
+  let serverUrl: string;
+  let client: UserDeviceClient | undefined;
+  const sockets: WebSocket[] = [];
+
+  beforeEach(async () => {
+    root = await realpath(await mkdtemp(path.join(tmpdir(), "rakazo-device-task-test-")));
+    http = createServer();
+    wss = new WebSocketServer({ noServer: true });
+    http.on("upgrade", (request, socket, head) => {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        sockets.push(ws);
+        wss.emit("connection", ws);
+      });
+    });
+    await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+    serverUrl = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
+  });
+  afterEach(async () => {
+    client?.close();
+    client = undefined;
+    for (const ws of wss.clients) ws.terminate();
+    sockets.length = 0;
+    wss.close();
+    http.closeAllConnections();
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  });
+
+  function start(
+    runTask: UserDeviceTaskRunner,
+    onTask?: (task: { taskId: string; running: boolean }) => void,
+  ) {
+    client = startUserDeviceClient({
+      serverUrl,
+      token,
+      root,
+      onRevoked: () => undefined,
+      authorize: async () => true,
+      runTask,
+      approvalTimeoutMs: 200,
+      ...(onTask ? { onTask } : {}),
+    });
+  }
+  async function connection() {
+    while (!sockets.length) await once(wss, "connection");
+    return sockets[0]!;
+  }
+  function messages(ws: WebSocket) {
+    const received: Record<string, unknown>[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+    return received;
+  }
+  async function until(check: () => boolean) {
+    await vi.waitFor(() => expect(check()).toBe(true), { timeout: 10_000, interval: 10 });
+  }
+
+  it("runs a task and reports what happened", async () => {
+    start({
+      async run(_task, control) {
+        control.event({ kind: "started", at: "2026-01-01T00:00:00.000Z" });
+        control.event({
+          kind: "step",
+          at: "2026-01-01T00:00:00.000Z",
+          index: 0,
+          action: "click",
+          summary: "Clicked the address bar",
+        });
+        return { answer: "Safari is open" };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "finished",
+      ),
+    );
+    const events = received
+      .filter((message) => message.type === "taskEvent")
+      .map((message) => message.event as { kind: string; answer?: string });
+    expect(events.map((event) => event.kind)).toEqual(["started", "step", "finished"]);
+    expect(events.at(-1)?.answer).toBe("Safari is open");
+  });
+
+  it("remembers why it refused an action, for a status question after the task", async () => {
+    start({
+      async run(_task, control) {
+        control.event({
+          kind: "blocked",
+          at: "2026-01-01T00:00:00.000Z",
+          reason: "Network access is off for this task.",
+        });
+        return { answer: "I could not fetch the page." };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "finished",
+      ),
+    );
+    const frames: { frame?: { value?: { blocked?: { reason: string } } } }[] = [];
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString())));
+    ws.send(
+      JSON.stringify({
+        type: "request",
+        id: "s1",
+        request: { method: "taskStatus", botId: "bot", taskId: localTask.taskId },
+      }),
+    );
+    await until(() => frames.some((frame) => frame.frame?.value?.blocked));
+    expect(frames.find((frame) => frame.frame?.value?.blocked)?.frame?.value?.blocked?.reason).toBe(
+      "Network access is off for this task.",
+    );
+  });
+
+  it("asks the cloud before an action and waits for the answer", async () => {
+    let answered = false;
+    start({
+      async run(_task, control) {
+        const decision = await control.approve({
+          approvalId: "a1",
+          at: "2026-01-01T00:00:00.000Z",
+          action: "type",
+          summary: "Type a password",
+          detail: "hunter2",
+        });
+        answered = decision.allowed;
+        return { answer: decision.allowed ? "typed" : "refused" };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() => received.some((message) => message.type === "taskApproval"));
+    const request = received.find((message) => message.type === "taskApproval")!.request as {
+      approvalId: string;
+      detail: string;
+    };
+    expect(request.approvalId).toBe("a1");
+    expect(request.detail).toBe("hunter2");
+    ws.send(
+      JSON.stringify({
+        type: "taskDecision",
+        id: "t1",
+        decision: { approvalId: request.approvalId, allowed: true },
+      }),
+    );
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "finished",
+      ),
+    );
+    expect(answered).toBe(true);
+  });
+
+  it("does not run the same task twice", async () => {
+    let runs = 0;
+    start({
+      async run() {
+        runs += 1;
+        return { answer: "done" };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() => received.filter((message) => message.type === "taskEvent").length >= 1);
+    ws.send(JSON.stringify({ type: "task", id: "t2", task: localTask }));
+    await until(() => received.filter((message) => message.type === "taskEvent").length >= 2);
+    expect(runs).toBe(1);
+    const answers = received
+      .filter((message) => message.type === "taskEvent")
+      .map((message) => (message.event as { answer?: string }).answer);
+    expect(answers).toEqual(["done", "done"]);
+  });
+
+  it("answers for a task it ran before the server restarted", async () => {
+    start({
+      async run() {
+        return { answer: "Safari is open" };
+      },
+    });
+    const first = await connection();
+    const received = messages(first);
+    first.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "finished",
+      ),
+    );
+    // The server went away and came back; the computer reconnects on its own.
+    first.terminate();
+    await until(() => sockets.length > 1);
+    const again = sockets.at(-1)!;
+    const frames: { frame?: { value?: { state?: string; answer?: string } } }[] = [];
+    again.on("message", (data) => frames.push(JSON.parse(data.toString())));
+    again.send(
+      JSON.stringify({
+        type: "request",
+        id: "s1",
+        request: { method: "taskStatus", botId: "bot", taskId: localTask.taskId },
+      }),
+    );
+    await until(() => frames.some((frame) => frame.frame?.value?.state));
+    expect(frames.find((frame) => frame.frame?.value?.state)?.frame?.value).toMatchObject({
+      state: "finished",
+      answer: "Safari is open",
+    });
+  });
+
+  it("stops a cancelled task", async () => {
+    let stopped = false;
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    start({
+      async run(_task, control) {
+        started();
+        await new Promise<void>((resolve) => {
+          control.signal.addEventListener("abort", () => {
+            stopped = true;
+            resolve();
+          });
+        });
+        return { answer: "stopped" };
+      },
+    });
+    const ws = await connection();
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await running;
+    ws.send(JSON.stringify({ type: "taskCancel", id: "t1" }));
+    await until(() => stopped);
+  });
+
+  it("stops waiting for an approval nobody answers", async () => {
+    let answered: boolean | undefined;
+    start({
+      async run(_task, control) {
+        const decision = await control.approve({
+          approvalId: "a1",
+          at: "2026-01-01T00:00:00.000Z",
+          action: "click",
+          summary: "Click in Safari",
+        });
+        answered = decision.allowed;
+        return { answer: "done" };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() => received.some((message) => message.type === "taskApproval"));
+    await until(() => answered !== undefined);
+    // A question nobody answered is a refusal, never a silent allow.
+    expect(answered).toBe(false);
+  });
+
+  it("stops every running task on request and keeps the connection", async () => {
+    let stopped = false;
+    const seen: Array<{ taskId: string; running: boolean }> = [];
+    start(
+      {
+        async run(_task, control) {
+          await new Promise<void>((resolve) => {
+            control.signal.addEventListener("abort", () => {
+              stopped = true;
+              resolve();
+            });
+          });
+          return { answer: "stopped" };
+        },
+      },
+      (task) => seen.push(task),
+    );
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() => seen.length === 1);
+    client!.stopTasks();
+    await until(() => stopped);
+    // The connection survives, so a request still gets an answer.
+    ws.send(
+      JSON.stringify({
+        type: "request",
+        id: "env",
+        request: { method: "environment", botId: "x" },
+      }),
+    );
+    await until(() => received.some((message) => message.type === "frame"));
+    await until(() => seen.length === 2);
+    expect(seen).toEqual([
+      { taskId: "task-1", running: true },
+      { taskId: "task-1", running: false },
+    ]);
+  });
+
+  it("reports that it cannot run a task when no runner is set", async () => {
+    client = startUserDeviceClient({
+      serverUrl,
+      token,
+      root,
+      onRevoked: () => undefined,
+      authorize: async () => true,
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "failed",
+      ),
+    );
+    const event = received.find((message) => message.type === "taskEvent")!.event as {
+      error: string;
+    };
+    expect(event.error).toContain("cannot run tasks");
   });
 });

@@ -4,8 +4,7 @@ import { cloudAgentBlockFromPayload } from "@rakazo/core";
 import type { CloudAgent, PrismaClient, ThreadEvents } from "@rakazo/db";
 import { appendEventInTransaction, createThreadMessageInTransaction } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
-import type { CloudAgentConnection } from "./cloud-agent-factory.js";
-import { cloudAgentsEnabled } from "./cloud-agent-factory.js";
+import type { CloudAgentProviders } from "./cloud-agent-factory.js";
 import { cloudAgentLaunchSchema, cloudAgentReplySchema } from "./cloud-agent-tools.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { runLeaseFor } from "./run-messages.js";
@@ -14,7 +13,7 @@ export interface CloudAgentDeps {
   prisma: PrismaClient;
   jobs: JobPublisher;
   events: Pick<ThreadEvents, "notify">;
-  cloudAgent: CloudAgentConnection | null | undefined;
+  cloudAgent: CloudAgentProviders | null | undefined;
   runLease?: ExecutorDeps["runLease"];
 }
 
@@ -30,9 +29,12 @@ export async function executeCloudAgentTool(
   name: string,
   args: Record<string, unknown>,
 ) {
-  const connection = deps.cloudAgent;
-  if (!connection || !cloudAgentsEnabled(connection, context.spaceId)) {
-    return { error: "Cloud agents are not configured for this space." };
+  const providers = deps.cloudAgent;
+  const providerKey = await providers
+    ?.keyFor(context.spaceId, context.userId)
+    .catch(() => undefined);
+  if (!providers || !providerKey) {
+    return { error: "Cloud agents are not available for this account." };
   }
   let agent: CloudAgent;
   if (name === "cloud_agent_launch") {
@@ -50,7 +52,7 @@ export async function executeCloudAgentTool(
         if (
           existing.spaceId !== context.spaceId ||
           existing.userId !== context.userId ||
-          existing.providerKey !== connection.key
+          existing.providerKey !== providerKey
         ) {
           throw new Error("Cloud agent operation scope changed");
         }
@@ -59,7 +61,7 @@ export async function executeCloudAgentTool(
       const created = await tx.cloudAgent.create({
         data: {
           operationKey: context.operationId,
-          providerKey: connection.key,
+          providerKey,
           spaceId: context.spaceId,
           userId: context.userId,
           botId: context.botId,
@@ -105,7 +107,7 @@ export async function executeCloudAgentTool(
     const owned = await deps.prisma.cloudAgent.findFirst({
       where: {
         id: String(args.id).trim(),
-        providerKey: connection.key,
+        providerKey,
         spaceId: context.spaceId,
         userId: context.userId,
       },
@@ -168,11 +170,14 @@ export async function reconcileCloudAgents(
   deps: Pick<CloudAgentDeps, "prisma" | "jobs" | "cloudAgent">,
 ) {
   if (!deps.cloudAgent) return;
+  const keys = deps.cloudAgent.keys();
   const due = await deps.prisma.cloudAgent.findMany({
     where: {
-      providerKey: deps.cloudAgent.key,
       nextPollAt: { lte: new Date() },
-      ...(deps.cloudAgent.spaceId ? { spaceId: deps.cloudAgent.spaceId } : {}),
+      OR: [
+        ...(keys.exact.length ? [{ providerKey: { in: keys.exact } }] : []),
+        ...keys.prefixes.map((prefix) => ({ providerKey: { startsWith: prefix } })),
+      ],
     },
     orderBy: [{ nextPollAt: "asc" }, { id: "asc" }],
     take: 100,

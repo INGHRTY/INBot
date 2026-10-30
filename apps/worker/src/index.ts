@@ -22,6 +22,7 @@ import {
   createDeadJobPruner,
   createIdleComputerSweeper,
   createJobReconciler,
+  createLocalDeviceCloudAgents,
   createMessagingContextLoader,
   createModelCreditReconciler,
   createPaymentWalletProvider,
@@ -240,7 +241,20 @@ async function main() {
     ticketBoardEnabled,
   });
   // One provider instance so emulator launches and polls share the same Map.
-  const cloudAgent = createCloudAgentConnection();
+  const deploymentCloudAgent = createCloudAgentConnection();
+  // Device sockets live in an API process; the worker forwards to whichever one holds it.
+  const userDevices =
+    process.env.USER_DEVICES_ENABLED === "false"
+      ? undefined
+      : new UserDevices({
+          prisma,
+          forwardSecret: userDeviceForwardSecret(resolveEncryptionKey(process.env)),
+        });
+  // The deployment provider and each person's own computer are offered side by side.
+  const cloudAgent = createLocalDeviceCloudAgents({
+    deployment: deploymentCloudAgent,
+    ...(userDevices ? { devices: userDevices } : {}),
+  });
   const paymentWallet = await createPaymentWalletProvider();
   // Shared with the reconciler so a stuck wait uses the same push path as a finish notice.
   const pushTokens = new PrismaPushTokenStore(prisma, resolveEncryptionKey(process.env));
@@ -293,14 +307,7 @@ async function main() {
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
-    // Device sockets live in an API process; the worker forwards to whichever one holds it.
-    userDevices:
-      process.env.USER_DEVICES_ENABLED === "false"
-        ? undefined
-        : new UserDevices({
-            prisma,
-            forwardSecret: userDeviceForwardSecret(resolveEncryptionKey(process.env)),
-          }),
+    userDevices,
     paymentWallet,
     shutdownSignal: shutdown.signal,
   });

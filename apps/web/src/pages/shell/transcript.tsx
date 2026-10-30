@@ -72,6 +72,7 @@ export const Transcript = memo(function Transcript({
   onLoadOlder,
   onOpenBot,
   onAnswer,
+  onAnswerCloudAgent,
   onReply,
   onMarkUnread,
   markedUnreadMessageId,
@@ -117,6 +118,7 @@ export const Transcript = memo(function Transcript({
     dismiss?: boolean,
     remember?: false,
   ) => Promise<void>;
+  onAnswerCloudAgent?: (agentId: string, approvalAction: string, allowed: boolean) => Promise<void>;
   onReply: (message: ThreadMessage) => void;
   onMarkUnread: (message: ThreadMessage) => void;
   markedUnreadMessageId?: string;
@@ -515,6 +517,7 @@ export const Transcript = memo(function Transcript({
                       onOpenPeerMessages={onOpenPeerMessages}
                       peerExchange={exchanges.lines.get(message.id)}
                       onAnswer={onAnswer}
+                      onAnswerCloudAgent={onAnswerCloudAgent}
                       speakerName={
                         peerReceipt
                           ? undefined

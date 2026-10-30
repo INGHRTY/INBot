@@ -43,6 +43,7 @@ import {
   createConnectorStack,
   createIdleComputerSweeper,
   createJobReconciler,
+  createLocalDeviceCloudAgents,
   createMessagingContextLoader,
   createMessagingTeamChatHistory,
   createMessagingTeamChatSender,
@@ -584,7 +585,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
       if (!shutdown.signal.aborted) getLogger().error("mcp server arguments move failed", error);
     });
   // One provider instance so emulator launches and polls share the same Map.
-  const cloudAgent = createCloudAgentConnection({
+  const deploymentCloudAgent = createCloudAgentConnection({
     CLOUD_AGENT_PROVIDER: env.cloudAgentProvider,
     CURSOR_API_KEY: env.cursorApiKey,
     CLOUD_AGENT_SPACE_ID: env.cloudAgentSpaceId,
@@ -603,6 +604,11 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   const userDevices = userDeviceHub
     ? new UserDevices({ prisma, forwardSecret: userDeviceSecret, hub: userDeviceHub })
     : undefined;
+  // The deployment provider and each person's own computer are offered side by side.
+  const cloudAgent = createLocalDeviceCloudAgents({
+    deployment: deploymentCloudAgent,
+    ...(userDevices ? { devices: userDevices } : {}),
+  });
   const executor = createRunExecutor({
     billingEnabled: modelCreditsEnabled,
     maxUploadSizeBytes: env.maxUploadSizeBytes,
@@ -718,6 +724,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     pluginRepoFetcher,
     pluginMarketplaceRead,
     cloudAgent,
+    userDevices: userDevicesOverride ?? userDevices,
     paymentWallet,
     codexCatalog,
     prisma,

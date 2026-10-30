@@ -1,6 +1,10 @@
 import { ORPCError } from "@orpc/server";
 import { runContinueJob, runJobKey } from "@rakazo/adapter-kit";
-import { settleCallRequest } from "@rakazo/adapters";
+import {
+  LocalDeviceCloudAgentProvider,
+  resolveCloudAgent,
+  settleCallRequest,
+} from "@rakazo/adapters";
 import type { Actor, ProductEvent } from "@rakazo/contracts";
 import {
   AttachmentValidationError,
@@ -296,6 +300,54 @@ export function threadsRoutes(ctx: RouterContext) {
       stop: authed.threads.stop.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         await stopThreadRuns(deps, context.actor, target);
+        return { ok: true as const };
+      }),
+      answerCloudAgent: authed.threads.answerCloudAgent.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        const agent = await deps.prisma.cloudAgent.findFirst({
+          where: {
+            id: input.agentId,
+            spaceId: context.actor.spaceId,
+            userId: context.actor.userId,
+            threadId: target.threadId,
+          },
+          select: { id: true, awaitingApproval: true, status: true },
+        });
+        if (agent?.status !== "running") {
+          throw new ORPCError("CONFLICT", { message: "That task is no longer waiting" });
+        }
+        // The card the person saw must be the action they are answering, so a card that
+        // changed underneath them cannot approve something else. The id is the computer's
+        // own key for the pending action, so an answer carrying it reaches that action.
+        const shown = agent.awaitingApproval as { approvalId?: unknown; action?: unknown } | null;
+        if (
+          typeof shown?.approvalId !== "string" ||
+          typeof shown.action !== "string" ||
+          shown.action !== input.approvalAction
+        ) {
+          throw new ORPCError("CONFLICT", { message: "That task is asking something else now" });
+        }
+        const connection = await resolveCloudAgent(
+          deps.cloudAgent,
+          context.actor.spaceId,
+          context.actor.userId,
+        );
+        // Only a task on someone's own computer raises this card; other providers have no
+        // pending action to answer.
+        const provider = connection?.provider;
+        if (!(provider instanceof LocalDeviceCloudAgentProvider))
+          throw new ORPCError("CONFLICT", { message: "That task cannot be answered" });
+        await provider.decide(
+          agent.id,
+          { approvalId: shown.approvalId, allowed: input.allowed },
+          {
+            operationId: agent.id,
+            traceId: agent.id,
+            spaceId: context.actor.spaceId,
+            userId: context.actor.userId,
+            signal: context.signal ?? new AbortController().signal,
+          },
+        );
         return { ok: true as const };
       }),
       clear: authed.threads.clear.handler(async ({ context, input }) => {

@@ -1,4 +1,5 @@
 import { fetch as undiciFetch } from "undici";
+import type { FetchInput } from "./fetch-types.js";
 
 /** The fetch that must drive any `Agent` built from the `undici` package.
  *
@@ -7,7 +8,7 @@ import { fetch as undiciFetch } from "undici";
  * its `Agent`. Global `FormData` fails this package's brand check, so it is serialized first.
  * The package `Response` fails `instanceof Response` (the MCP SDK then stringifies it), so the
  * result is re-wrapped in the global `Response`. */
-export const dispatcherFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+export const dispatcherFetch = (async (input: FetchInput | URL, init?: RequestInit) => {
   const response = await undiciFetch(
     input as Parameters<typeof undiciFetch>[0],
     (await initForPackageFetch(init)) as Parameters<typeof undiciFetch>[1],

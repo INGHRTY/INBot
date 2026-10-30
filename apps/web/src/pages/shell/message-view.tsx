@@ -53,6 +53,7 @@ export const MessageView = memo(function MessageView({
   message,
   mentions,
   onAnswer,
+  onAnswerCloudAgent,
   onOpenBot,
   onOpenPeerMessages,
   peerExchange,
@@ -89,6 +90,8 @@ export const MessageView = memo(function MessageView({
     remember?: false,
   ) => Promise<void>;
   onOpenBot: (botId: string) => void;
+  /** Answers a task on the person's computer that is waiting at an action. */
+  onAnswerCloudAgent?: (agentId: string, approvalAction: string, allowed: boolean) => Promise<void>;
   onOpenPeerMessages: (peer: { peerBotId: string; peerBotName: string }) => void;
   /** The adjacent receipts represented by this peer line. */
   peerExchange?: PeerExchange;
@@ -571,7 +574,22 @@ export const MessageView = memo(function MessageView({
               </div>
             );
           }
-          if (block.kind === "cloud_agent") return <CloudAgentCard key={i} block={block} />;
+          if (block.kind === "cloud_agent") {
+            const awaiting = block.awaitingApproval;
+            return (
+              <CloudAgentCard
+                key={i}
+                block={block}
+                onAnswer={
+                  awaiting && onAnswerCloudAgent
+                    ? (allowed) => {
+                        void onAnswerCloudAgent(block.agentId, awaiting.action, allowed);
+                      }
+                    : undefined
+                }
+              />
+            );
+          }
           if (block.kind === "skill_draft") {
             return (
               <div key={i} className="flex justify-start">

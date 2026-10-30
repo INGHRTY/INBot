@@ -42,6 +42,18 @@ describe("toComputerStatus", () => {
     expect(toComputerStatus("bot-1", computer, "Writer").busyBotName).toBe("Writer");
   });
 
+  it("reports no screen on a desktop computer, which is shown natively on the Mac", () => {
+    const computer = {
+      kind: "desktop" as const,
+      state: "running" as const,
+      scope: "team" as const,
+      controlHolder: "none" as const,
+      homeRevision: "r1",
+    };
+    expect(toComputerStatus("bot-1", computer).screenAvailable).toBe(false);
+    expect(toComputerStatus("bot-1", { ...computer, kind: "e2b" }).screenAvailable).toBe(true);
+  });
+
   it("hides update on desktop computers", () => {
     expect(
       toComputerStatus("bot-1", {

@@ -15,11 +15,30 @@ import {
   hostComputerDeadlineMs,
   hostComputerRequest,
 } from "./host-computer-protocol.js";
-import type { UserDevice, UserDeviceGateway } from "./user-device-protocol.js";
-import { userDeviceClientMessage } from "./user-device-protocol.js";
+import type {
+  ActionApprovalDecision,
+  ActionApprovalRequest,
+} from "./local-agent/grant-protocol.js";
+import { actionApprovalDecisionSchema } from "./local-agent/grant-protocol.js";
+import type { LocalAgentTask, TaskEvent } from "./local-agent/task-protocol.js";
+import { isTerminalTaskEvent, localAgentTaskSchema } from "./local-agent/task-protocol.js";
+import type {
+  UserDevice,
+  UserDeviceGateway,
+  UserDeviceTaskCommand,
+  UserDeviceTaskHandle,
+  UserDeviceTaskUpdate,
+} from "./user-device-protocol.js";
+import {
+  userDeviceClientMessage,
+  userDeviceTaskCommandSchema,
+  userDeviceTaskUpdateSchema,
+} from "./user-device-protocol.js";
 
 /** Internal API endpoints other processes forward to. Not under /api, so the public proxy never routes them. */
 export const USER_DEVICE_FORWARD_PATH = "/internal/user-devices/request";
+export const USER_DEVICE_TASK_PATH = "/internal/user-devices/task";
+export const USER_DEVICE_TASK_COMMAND_PATH = "/internal/user-devices/task-command";
 export const USER_DEVICE_DISCONNECT_PATH = "/internal/user-devices/disconnect";
 export const USER_DEVICE_OFFLINE_MESSAGE =
   "Your computer is not connected. Open the Rakazo desktop app.";
@@ -103,7 +122,8 @@ interface LiveDevice {
   device: AuthenticatedDevice;
   connectionId: string;
   socket: UserDeviceSocket;
-  pending: Map<string, FrameQueue>;
+  pending: Map<string, PendingQueue>;
+  tasks: Map<string, DeviceTask>;
   alive: boolean;
 }
 
@@ -191,7 +211,14 @@ export class UserDeviceHub {
   /** Registers a connected device socket; a newer socket for the same device replaces the older. */
   async attach(device: AuthenticatedDevice, socket: UserDeviceSocket): Promise<string> {
     const connectionId = randomUUID();
-    const entry: LiveDevice = { device, connectionId, socket, pending: new Map(), alive: true };
+    const entry: LiveDevice = {
+      device,
+      connectionId,
+      socket,
+      pending: new Map(),
+      tasks: new Map(),
+      alive: true,
+    };
     const previous = this.live.get(device.id);
     this.live.set(device.id, entry);
     if (previous) this.drop(previous, DISCONNECTED_MESSAGE, [4000, "Replaced"]);
@@ -245,7 +272,7 @@ export class UserDeviceHub {
     if (!entry || !this.holds(route)) throw new UserDeviceOfflineError();
     signal.throwIfAborted();
     const id = randomUUID();
-    const queue = new FrameQueue();
+    const queue = new PendingQueue();
     entry.pending.set(id, queue);
     const abort = () => queue.fail(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
@@ -300,6 +327,85 @@ export class UserDeviceHub {
     });
   }
 
+  /**
+   * Starts a task on a device and returns a handle for what it reports.
+   *
+   * The task runs on the computer; the cloud only sends it and reads what comes back. No
+   * frame ever crosses this channel.
+   */
+  startTask(
+    route: UserDeviceRoute,
+    id: string,
+    task: LocalAgentTask,
+    signal: AbortSignal,
+  ): UserDeviceTaskHandle {
+    const entry = this.live.get(route.deviceId);
+    if (!entry || !this.holds(route)) throw new UserDeviceOfflineError();
+    signal.throwIfAborted();
+    const session = new DeviceTask(entry.socket, id, task);
+    entry.tasks.set(id, session);
+    // A task that outlives its caller stops on the device rather than running on alone.
+    signal.addEventListener("abort", () => session.cancel(), { once: true });
+    try {
+      entry.socket.send(JSON.stringify({ type: "task", id, task }));
+    } catch (error) {
+      entry.tasks.delete(id);
+      throw new UserDeviceOfflineError(undefined, { cause: error });
+    }
+    return {
+      updates: (updateSignal) => session.updates(updateSignal),
+      decide: (decision) => session.decide(decision),
+      cancel: () => session.cancel(),
+    };
+  }
+
+  /** NDJSON stream of what a task reports; used when another process asked for the task. */
+  taskStream(
+    route: UserDeviceRoute,
+    id: string,
+    task: LocalAgentTask,
+    signal: AbortSignal,
+  ): Response {
+    if (!this.holds(route)) return new Response(null, { status: 409 });
+    const controller = new AbortController();
+    const linked = AbortSignal.any([signal, controller.signal]);
+    const handle = this.startTask(route, id, task, linked);
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(stream) {
+        try {
+          for await (const update of handle.updates(linked)) {
+            stream.enqueue(encoder.encode(`${JSON.stringify({ id, update })}\n`));
+          }
+          stream.close();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : DISCONNECTED_MESSAGE;
+          stream.enqueue(encoder.encode(`${JSON.stringify({ error: message })}\n`));
+          stream.close();
+        }
+      },
+      async cancel(reason) {
+        controller.abort(reason);
+        handle.cancel();
+      },
+    });
+    return new Response(body, {
+      headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" },
+    });
+  }
+
+  /** Applies a command to a task that runs on a device this process holds. */
+  taskCommand(route: UserDeviceRoute, id: string, command: UserDeviceTaskCommand): boolean {
+    const entry = this.live.get(route.deviceId);
+    if (!entry || !this.holds(route)) return false;
+    const session = entry.tasks.get(id);
+    if (!session) return false;
+    if (command.type === "decision") session.decide(command.decision);
+    else if (command.type === "reply") session.reply(command.text);
+    else session.cancel();
+    return true;
+  }
+
   /** Closes this process's socket for a device and fails its in-flight requests. */
   disconnect(deviceId: string): void {
     const entry = this.live.get(deviceId);
@@ -337,7 +443,18 @@ export class UserDeviceHub {
     }
     const message = userDeviceClientMessage.safeParse(parsed);
     if (!message.success) return;
-    entry.pending.get(message.data.id)?.push(message.data.frame, text.length);
+    if (message.data.type === "frame") {
+      entry.pending.get(message.data.id)?.push(message.data.frame, text.length);
+      return;
+    }
+    const session = entry.tasks.get(message.data.id);
+    if (!session) return;
+    if (message.data.type === "taskEvent") {
+      session.push({ kind: "event", event: message.data.event });
+      if (isTerminalTaskEvent(message.data.event)) entry.tasks.delete(message.data.id);
+      return;
+    }
+    session.push({ kind: "approval", request: message.data.request });
   }
 
   /** Forgets a connection and fails its requests; without a close code the socket is dead and is terminated. */
@@ -345,6 +462,8 @@ export class UserDeviceHub {
     if (this.live.get(entry.device.id) === entry) this.live.delete(entry.device.id);
     for (const queue of entry.pending.values()) queue.fail(new Error(message), true);
     entry.pending.clear();
+    for (const task of entry.tasks.values()) task.fail(new Error(message));
+    entry.tasks.clear();
     try {
       if (close) entry.socket.close(...close);
       else entry.socket.terminate();
@@ -480,6 +599,44 @@ export class UserDevices implements UserDeviceGateway {
     yield* framesToValues<T>(frames, deadline);
   }
 
+  /**
+   * Starts a task on the user's computer.
+   *
+   * The device belongs to a person, not to a deployment, so this is resolved per user and
+   * works from any API or worker process: when the socket lives elsewhere the task is
+   * forwarded to the process that holds it.
+   */
+  async taskCommand(
+    userId: string,
+    taskId: string,
+    command: UserDeviceTaskCommand,
+    deviceId?: string,
+  ): Promise<boolean> {
+    const route = await this.route(userId, deviceId);
+    if (!route) return false;
+    const target = { deviceId: route.deviceId, userId, connectionId: route.connectionId };
+    if (this.deps.hub?.holds(target)) {
+      return this.deps.hub.taskCommand(target, taskId, command);
+    }
+    return this.forwardCommand(route.address, target, taskId, command);
+  }
+
+  async task(
+    userId: string,
+    task: LocalAgentTask,
+    signal: AbortSignal,
+    deviceId?: string,
+  ): Promise<UserDeviceTaskHandle> {
+    const route = await this.route(userId, deviceId);
+    if (!route) throw new UserDeviceOfflineError();
+    const id = randomUUID();
+    const target = { deviceId: route.deviceId, userId, connectionId: route.connectionId };
+    if (this.deps.hub?.holds(target)) {
+      return this.deps.hub.startTask(target, id, task, signal);
+    }
+    return this.forwardTask(route.address, target, id, task, signal);
+  }
+
   /** Closes the device's socket wherever it is held. Best effort; heartbeats close it otherwise. */
   async disconnect(deviceId: string): Promise<void> {
     this.deps.hub?.disconnect(deviceId);
@@ -499,6 +656,82 @@ export class UserDevices implements UserDeviceGateway {
     })
       .then((response) => response.body?.cancel())
       .catch((error) => getLogger().warn("user device disconnect forward failed", { error }));
+  }
+
+  /** Runs a task on a device whose socket lives in another process. */
+  private async forwardTask(
+    address: string,
+    target: UserDeviceRoute,
+    id: string,
+    task: LocalAgentTask,
+    signal: AbortSignal,
+  ): Promise<UserDeviceTaskHandle> {
+    let response: Response;
+    try {
+      response = await this.fetch(new URL(USER_DEVICE_TASK_PATH, address), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.deps.forwardSecret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ...target, id, task }),
+        signal,
+        redirect: "error",
+      });
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new UserDeviceOfflineError(undefined, { cause: error });
+    }
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      throw new UserDeviceOfflineError();
+    }
+    const lines = ndjson(response.body, signal);
+    return {
+      updates: () => taskUpdates(lines),
+      decide: (decision) => {
+        void this.command(address, target, id, { type: "decision", decision });
+      },
+      cancel: () => {
+        void this.command(address, target, id, { type: "cancel" });
+      },
+    };
+  }
+
+  /** Sends a command to the process that holds the device's socket. */
+  private async command(
+    address: string,
+    target: UserDeviceRoute,
+    id: string,
+    command: UserDeviceTaskCommand,
+  ): Promise<void> {
+    await this.forwardCommand(address, target, id, command);
+  }
+
+  /** Sends a command to another process and reports whether it found the task. */
+  private async forwardCommand(
+    address: string,
+    target: UserDeviceRoute,
+    id: string,
+    command: UserDeviceTaskCommand,
+  ): Promise<boolean> {
+    try {
+      const response = await this.fetch(new URL(USER_DEVICE_TASK_COMMAND_PATH, address), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.deps.forwardSecret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ...target, id, command }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      await response.body?.cancel();
+      return response.ok;
+    } catch (error) {
+      getLogger().warn("user device task command forward failed", { error });
+      return false;
+    }
   }
 
   private async route(userId: string, deviceId?: string) {
@@ -561,6 +794,24 @@ export const userDeviceForwardBody = z.object({
   request: hostComputerRequest,
 });
 
+/** Body of a task another process asks this one to run on its device. */
+export const userDeviceTaskBody = z.object({
+  deviceId: z.string().min(1).max(64),
+  userId: z.string().min(1).max(128),
+  connectionId: z.string().min(1).max(64),
+  id: z.string().min(1).max(64),
+  task: localAgentTaskSchema,
+});
+
+/** Body of a command for a task another process is running. */
+export const userDeviceTaskCommandBody = z.object({
+  deviceId: z.string().min(1).max(64),
+  userId: z.string().min(1).max(128),
+  connectionId: z.string().min(1).max(64),
+  id: z.string().min(1).max(64),
+  command: userDeviceTaskCommandSchema,
+});
+
 async function* framesToValues<T>(
   frames: AsyncIterable<unknown>,
   signal: AbortSignal,
@@ -591,6 +842,18 @@ function hostFrame<T>(value: unknown): HostComputerFrame<T> | null {
 function isTerminal(frame: unknown) {
   const parsed = hostFrame(frame);
   return !parsed || "error" in parsed || "done" in parsed;
+}
+
+/** Turns the forwarded task stream into the updates the cloud reads. */
+async function* taskUpdates(lines: AsyncIterable<unknown>): AsyncIterable<UserDeviceTaskUpdate> {
+  for await (const line of lines) {
+    if (!line || typeof line !== "object") continue;
+    const record = line as { error?: unknown; update?: unknown };
+    if (typeof record.error === "string") throw new Error(record.error);
+    const update = userDeviceTaskUpdateSchema.safeParse(record.update);
+    if (!update.success) continue;
+    yield update.data;
+  }
 }
 
 async function* ndjson(body: ReadableStream<Uint8Array>, signal: AbortSignal) {
@@ -626,23 +889,31 @@ async function* ndjson(body: ReadableStream<Uint8Array>, signal: AbortSignal) {
 }
 
 /** Buffers device frames for one request until its consumer reads them. */
-class FrameQueue implements AsyncIterable<unknown> {
+class PendingQueue implements AsyncIterable<unknown> {
   private readonly items: Array<{ frame: unknown; size: number }> = [];
   private bytes = 0;
   private error: unknown;
   private failed = false;
+  private ended = false;
   /** The connection went away, so there is no device to cancel on. */
   lost = false;
   private wake?: () => void;
 
   push(frame: unknown, size: number) {
-    if (this.failed) return;
+    if (this.failed || this.ended) return;
     this.bytes += size;
     if (this.bytes > 2 * MAX_MESSAGE_BYTES) {
       this.fail(new Error("Response from your computer is too large"));
       return;
     }
     this.items.push({ frame, size });
+    this.wake?.();
+  }
+
+  /** No more items will arrive; the consumer can finish. */
+  end() {
+    if (this.failed || this.ended) return;
+    this.ended = true;
     this.wake?.();
   }
 
@@ -663,10 +934,78 @@ class FrameQueue implements AsyncIterable<unknown> {
         yield next.frame;
         continue;
       }
+      if (this.ended) return;
       await new Promise<void>((resolve) => {
         this.wake = resolve;
       });
       this.wake = undefined;
+    }
+  }
+}
+
+/**
+ * One task running on a device.
+ *
+ * The cloud reads what the device reports and answers the permission requests it raises.
+ * Nothing about the screen leaves the computer.
+ */
+class DeviceTask {
+  private readonly queue = new PendingQueue();
+  private readonly approvals = new Map<string, ActionApprovalRequest>();
+
+  constructor(
+    private readonly socket: UserDeviceSocket,
+    readonly id: string,
+    readonly task: LocalAgentTask,
+  ) {}
+
+  push(update: UserDeviceTaskUpdate) {
+    if (update.kind === "approval") this.approvals.set(update.request.approvalId, update.request);
+    this.queue.push(update, JSON.stringify(update).length);
+    // A task that finished has nothing more to say.
+    if (update.kind === "event" && isTerminalTaskEvent(update.event)) this.queue.end();
+  }
+
+  /** The answer only reaches the device when it answers a request this task raised. */
+  decide(decision: ActionApprovalDecision) {
+    if (!this.approvals.has(decision.approvalId)) return;
+    this.approvals.delete(decision.approvalId);
+    this.send({ type: "taskDecision", id: this.id, decision });
+  }
+
+  reply(text: string) {
+    this.send({ type: "taskReply", id: this.id, text });
+  }
+
+  cancel() {
+    this.send({ type: "taskCancel", id: this.id });
+  }
+
+  fail(error: Error) {
+    this.queue.fail(error, true);
+  }
+
+  updates(signal: AbortSignal): AsyncIterable<UserDeviceTaskUpdate> {
+    const queue = this.queue;
+    const abort = () => queue.fail(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    return (async function* () {
+      try {
+        for await (const update of queue) {
+          signal.throwIfAborted();
+          yield update as UserDeviceTaskUpdate;
+        }
+      } finally {
+        signal.removeEventListener("abort", abort);
+      }
+    })();
+  }
+
+  private send(message: Record<string, unknown>) {
+    try {
+      this.socket.send(JSON.stringify(message));
+    } catch {
+      // The socket is closing; its close handler fails the task.
     }
   }
 }

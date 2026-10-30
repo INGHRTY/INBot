@@ -53,4 +53,46 @@ describe("shared cloud agent projection", () => {
     ])
       expect(cloudAgentHttpsUrl(url)).toBeUndefined();
   });
+  it("carries the exact action a task waits on, and drops one that names no id", () => {
+    const waiting = cloudAgentBlockFromPayload({
+      status: "running",
+      awaitingApproval: {
+        approvalId: "type#1a2b3c4d",
+        action: "type",
+        summary: "Type in Safari",
+        detail: "INV-2041",
+      },
+    });
+    expect(waiting.awaitingApproval).toEqual({
+      approvalId: "type#1a2b3c4d",
+      action: "type",
+      summary: "Type in Safari",
+      detail: "INV-2041",
+    });
+    // An answer keyed to a stale action is worse than showing nothing, so a card without
+    // an id is not shown as waiting at all.
+    expect(
+      cloudAgentBlockFromPayload({
+        status: "running",
+        awaitingApproval: { action: "type", summary: "Type in Safari" },
+      }).awaitingApproval,
+    ).toBeUndefined();
+  });
+
+  it("shows the answer a task gave, and nothing it did not", () => {
+    expect(
+      cloudAgentBlockFromPayload({ status: "finished", result: "Safari is open" }).result,
+    ).toBe("Safari is open");
+    expect(cloudAgentBlockFromPayload({ status: "running", result: "" }).result).toBeUndefined();
+  });
+
+  it("carries the computer's reason for refusing an action", () => {
+    expect(
+      cloudAgentBlockFromPayload({
+        status: "running",
+        blockedReason: "Network access is off for this task.",
+      }).blockedReason,
+    ).toBe("Network access is off for this task.");
+    expect(cloudAgentBlockFromPayload({ status: "running" }).blockedReason).toBeUndefined();
+  });
 });

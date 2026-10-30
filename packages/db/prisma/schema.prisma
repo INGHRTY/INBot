@@ -952,6 +952,12 @@ model CloudAgent {
   url                 String   @default("")
   branch              String?
   prUrl               String?
+  /** What a device task answered. A remote coding agent's answer is its pull request. */
+  result              String?
+  /** The action a device task is waiting to be allowed to take, while it waits. */
+  awaitingApproval    Json?
+  /** The last action a device task refused to take, and why. Never a frame or a screenshot. */
+  blockedReason       String?
   launchRequest       Json
   launchDispatched    Boolean  @default(false)
   followup            Json?

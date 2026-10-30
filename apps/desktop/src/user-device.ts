@@ -118,15 +118,21 @@ export function createUserDeviceAccess(deps: {
   /** The native consent prompt. Resolves true only when the person clicks Allow. */
   confirm: (host: string) => Promise<boolean>;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
+  /** Told when a task starts and ends on this computer, so the app can show that it is busy. */
+  onTask?: (task: { taskId: string; running: boolean }) => void;
   connect: (
     origin: string,
     token: string,
-    events: { onRevoked: () => void; authorize: () => Promise<boolean> },
-  ) => { close(): void; cancelAll(): void };
+    events: {
+      onRevoked: () => void;
+      authorize: () => Promise<boolean>;
+      onTask?: (task: { taskId: string; running: boolean }) => void;
+    },
+  ) => { close(): void; cancelAll(): void; stopTasks(): void };
 }) {
   let current: string | null = null;
   let generation = 0;
-  let client: { origin: string; close(): void; cancelAll(): void } | undefined;
+  let client: { origin: string; close(): void; cancelAll(): void; stopTasks(): void } | undefined;
   const paired = new Map<string, string | null>();
   const consent = new Map<string, DeviceConsent | null>();
   /** Bumped on every consent change, so a prompt answered after one is ignored. */
@@ -146,6 +152,7 @@ export function createUserDeviceAccess(deps: {
       origin,
       close: () => connection.close(),
       cancelAll: () => connection.cancelAll(),
+      stopTasks: () => connection.stopTasks(),
     };
     const connection = deps.connect(origin, token, {
       // Revoked by the server or its token was rejected: stay unpaired until turned back on.
@@ -156,6 +163,7 @@ export function createUserDeviceAccess(deps: {
         void decide(origin, "declined").catch(() => undefined);
       },
       authorize: () => authorize(origin),
+      onTask: (task) => deps.onTask?.(task),
     });
     client = active;
   }
@@ -319,6 +327,10 @@ export function createUserDeviceAccess(deps: {
       if (!paired.has(origin)) throw new Error("Could not pair this computer");
       if (changes.get(origin) !== seen) return;
       await decide(origin, "allowed");
+    },
+    /** Stops every task running on this computer, and keeps the connection. */
+    stopTasks() {
+      client?.stopTasks();
     },
     close() {
       ++generation;

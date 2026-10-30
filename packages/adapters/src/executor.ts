@@ -58,7 +58,6 @@ import {
 } from "./bot-secrets.js";
 import { createBrowserProvider } from "./browser-provider-factory.js";
 import { agentConnectionTools, builtinAgentTools } from "./builtin-tools.js";
-import { cloudAgentsEnabled } from "./cloud-agent-factory.js";
 import { mergeConnectedPlugins, needsLivePluginSync } from "./composio-connector.js";
 import { scheduleComputerSleep } from "./computer-idle.js";
 import type { ComputerExecutionLease } from "./computer-lifecycle.js";
@@ -1081,6 +1080,9 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           else if (await deps.userDevices.hasDevice(userComputerOwnerId).catch(() => false))
             userComputer = "offline";
         }
+        const cloudAgentOffered = await cloudAgent
+          ?.available(run.spaceId, run.userId)
+          .catch(() => false);
         const builtins = [
           ...selectBuiltinToolsForRun({
             ticketBoardEnabled: deps.ticketBoardEnabled,
@@ -1094,7 +1096,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             semanticMemoryForgets: Boolean(semanticMemory?.forget),
             mediaImagesEnabled: Boolean(deps.artifacts && mediaGeneration?.capabilities.images),
             mediaVideoEnabled: Boolean(deps.artifacts && mediaGeneration?.capabilities.video),
-            cloudAgentEnabled: cloudAgentsEnabled(cloudAgent, run.spaceId),
+            cloudAgentEnabled: Boolean(cloudAgentOffered),
             paymentWalletEnabled,
             messagingChannelRun,
             voiceCall,
@@ -1774,10 +1776,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             },
           });
           if (retryForever || dispatchHandedOff) {
-            await deps.jobs.enqueue({
-              ...runContinueJob(runId),
-              availableAt: retryAt,
-            });
+            await deps.jobs.enqueue({ ...runContinueJob(runId), availableAt: retryAt });
             return;
           }
           throw new Error("Run setup failed; retrying", { cause: reportedSetupError });

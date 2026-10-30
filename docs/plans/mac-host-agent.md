@@ -224,15 +224,25 @@ onDemand === "deny"？ → 不执行，回 blocked
 
 ### 2.1 传输层：从「请求-响应」到「任务-结果」
 
-现有设备通道是「云端发一个请求、设备回一堆帧」（`host-computer-protocol.ts`）。任务语义需要另外两种消息：
+现有设备通道是「云端发一个请求、设备回一堆帧」（`host-computer-protocol.ts`）。任务语义需要另外几种消息：
 
 ```ts
-// packages/adapters/src/user-device-protocol.ts（新增）
-// 云端 → 设备：派一个任务
-{ type: "task", id, task: LocalAgentTask }
-// 设备 → 云端：任务进度与最终结果
-{ type: "taskEvent", id, event: TaskEvent }
+// packages/adapters/src/user-device-protocol.ts
+// 云端 → 设备
+{ type: "task", id, task: LocalAgentTask }        // 派一个任务
+{ type: "taskReply", id, text }                   // 追加一条指令
+{ type: "taskCancel", id }                        // 中止任务
+{ type: "taskDecision", id, decision }            // 回答一次逐次确认
+// 设备 → 云端
+{ type: "taskEvent", id, event: TaskEvent }       // 进度与最终结果
+{ type: "taskApproval", id, request }             // 请求用户批准一个动作
 ```
+
+**向后兼容靠「联合类型里没有分支」实现**：消息联合是 `z.discriminatedUnion`，老客户端解析不了 `task` 就整条丢弃；老服务端同样丢弃 `taskEvent`。两个方向的测试都钉住了这一点（`user-device-protocol.test.ts`）。
+
+**幂等**：`task.taskId` 是幂等键。设备端记住跑完的任务的终态事件，重发同一个 `taskId` 时**重放结果**而不是重跑。
+
+**取消不能丢**：任务先登记再 `await`（授权、用户确认都是异步的），所以「取消」在授权还没回来时也能生效。
 
 `LocalAgentTask` 结构：
 
@@ -293,9 +303,14 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
    → `cloudAgentsEnabled` 的 Space 绑定对设备 provider 不适用（设备属于用户，不属于 Space），需要一条「该用户在本 Space 内有已授权设备」的判定。
 
 2. **`CloudAgent` 表的行状态**已经够用：`launchRequest` 存任务、`remoteId` 存 deviceId、`latestRunId` 存 taskId、`status`、`cancelRequested`、`generation`（重试代数）、`leaseToken`（轮询租约）、`wakeGeneration`（终态唤醒）。
-   → 表结构**不需要改**。只有 `launchRequest` 的 schema 要放宽（现在强制 `prompt` + 可选 `repository`/`openPr`）。用 `cloudAgentLaunchSchema` 扩一个 `kind: "local-device"` 分支即可。
+   → 只有 `launchRequest` 的 schema 要放宽（现在强制 `prompt` + 可选 `repository`/`openPr`）。用 `cloudAgentLaunchSchema` 扩一个 `kind: "local-device"` 分支即可。
 
-3. **审批**：`cloud_agent_launch` 已经在 `action-approval.ts:41` 的 `EXPLICIT_APPROVAL` 名单里（每次都要问）。设备任务沿用这个位置，但审批卡要显示**授权包内容**（不是一句「允许启动云 agent」）。审批规则匹配按工具名走，够用。
+   **但实测核查后有一处必须补：任务的答案没有地方落。** `CloudAgentSnapshot` 只有 `title / status / url / branch / prUrl / latestRunId`，`snapshotData()` 也只写这几个字段（`cloud-agent-poll.ts:238`）。Cursor 那边「答案」是远端仓库里的 PR，云端不需要存；设备任务的答案是**一段文本**，而 worker 里的 `get()` 拿不到 API 进程活着的那条 socket 会话，所以必须**持久化**，否则终态唤醒的 bot 只看到 `status = finished`，读不到任何内容。
+   → 建议：`CloudAgent` 加一个 `result String?`（新增可空列，按 `AGENTS.md` 是安全迁移），`CloudAgentSnapshot` 加 `result?: string`，`snapshotData()` 写它，`cloud_agent_status` 读它。这是本轮唯一需要动的 schema。
+
+3. **`get()` 的调用面**：`pollCloudAgent` 在 `launch` 之后的每一次轮询都调 `provider.get(remoteId)`，而 `launch` 返回的 `UserDeviceTaskHandle` 是进程内的、随 `launch` 那次调用结束就没了。因此 `get()` 不能依赖 handle，只能**按需向设备重问一次**：新增一条 `taskStatus` 请求（设备回「还在跑 / 已结束 + 答案」），由现有的同步请求通道（`request`/`frame`）承载，不占用任务会话。
+
+4. **审批**：`cloud_agent_launch` 已经在 `action-approval.ts:41` 的 `EXPLICIT_APPROVAL` 名单里（每次都要问）。设备任务沿用这个位置，但审批卡要显示**授权包内容**（不是一句「允许启动云 agent」）。审批规则匹配按工具名走，够用。
 
 ### 2.3 授权包（TaskGrant）
 
@@ -325,11 +340,20 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
 
 2. **屏幕捕获与输入注入**（macOS 优先，Windows/Linux 后续）。
    - **截图**：Electron `desktopCapturer.getSources({ types: ["screen"], thumbnailSize })`。macOS 需要「屏幕录制」TCC 授权；用 `systemPreferences.getMediaAccessStatus("screen")` 探测。
-   - **输入注入**：**koffi 调用 CoreGraphics**（`CGEventCreateMouseEvent` / `CGEventCreateKeyboardEvent` / `CGEventPost`）。仓库已有 koffi 依赖和 macOS 调用先例（`file-handle-path.ts` 加载 `libSystem.dylib`）。需要「辅助功能」TCC 授权，用 `AXIsProcessTrustedWithOptions` 探测。
+   - **截图按「点」而不是「像素」**：Retina 屏上 `CGEvent` 的鼠标坐标是逻辑点，截图却是两倍像素。为了让模型看到的坐标就是能点的坐标，缩略图按显示器的逻辑尺寸请求（`thumbnailSize = display.bounds`），图像像素与屏幕坐标一一对应，点击时只需加上显示器原点。
+   - **输入注入**：**koffi 调用 CoreGraphics**（`CGEventCreateMouseEvent` / `CGEventCreateKeyboardEvent` / `CGEventPost`）。仓库已有 koffi 依赖和 macOS 调用先例（`file-handle-path.ts` 加载 `libSystem.dylib`）。需要「辅助功能」TCC 授权，用 `AXIsProcessTrusted` 探测。
      - 不要用 `osascript` + System Events：慢、中文输入法不友好、且要同时申请「辅助功能」和「自动化」两项授权。
-   - **文本输入**：走剪贴板 + `Cmd+V`（`CGEvent` 组合键 + `NSPasteboard`）。比逐键 `CGEvent` 稳，且天然支持中文。
-   - **窗口信息**：`AXUIElement`（需辅助功能权限）拿焦点窗口标题；无权限时降级为 `NSWorkspace.frontmostApplication`（只能拿应用名）。标题必须过 `redactSecrets`。
+   - **移动指针必须用 `CGWarpMouseCursorPosition`**：只 post 一个 mouse-moved 事件**不会**移动指针（实测：事件发出后指针纹丝不动）。正确做法是先 warp，再 post 事件让应用收到 hover。
+   - **文本输入**：走 `CGEventKeyboardSetUnicodeString` 逐字符注入，**不动剪贴板**。原方案写的是剪贴板 + `Cmd+V`，实现时改了：剪贴板方案会覆盖用户自己的剪贴板，在个人电脑上这是看得见的副作用；Unicode 注入同样支持中文。`\n` / `\t` 仍走 Return / Tab 键，因为纯 Unicode 字符不会触发应用的换行处理。
+   - **窗口信息**：用 `CGWindowListCopyWindowInfo`，取**第一个 layer == 0 的窗口**（系统自己的菜单栏 / Dock / 通知中心都在更高的 layer 上，所以这一条规则与系统语言无关）。窗口标题由「屏幕录制」权限决定，没有该权限时标题为空。**不用 `AXUIElement`**：实测 `AXUIElementCopyAttributeValue` 取 `AXFocusedApplication` 会返回 `-25204` / `-25212`，且失败时输出缓冲区里是野指针，接着调用 `AXUIElementGetPid` 会直接 SIGILL 崩溃。
    - **应用启动**：`open -a <name>` / `open <path>`。
+   - **注意**：macOS 27 的系统框架只在 dyld 共享缓存里，磁盘上没有 `Versions/C`，只有 `Versions/A`。所以框架路径一律用**不带版本号**的软链接（`/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics`），写死 `Versions/C` 会在新系统上直接失败。
+
+   **已在本机验证**（macOS 27.2，Electron 45）：
+- 截图按请求尺寸返回；Electron `getCursorScreenPoint()` 与 `CGEventGetLocation()` 数值相同（同一坐标空间）。
+- 中文与 ASCII 文本注入成功、`⌘A` 修饰键成功、按钮点击成功。
+- **整条本地 agent 链路**：真实桌面 + 本地假模型跑完一次任务——
+  `computer_observe` 拿到真实截图 → 模型要求点击 → 设备端弹出**带具体动作**的审批请求（`Click in T3 Code (Nightly) at (40, 40)`）→ 批准后执行 → 返回答案。上报的 `step` 摘要只有「Used the computer in …」，**不含坐标**。
 
 3. **授权包执行器**（§2.3）。在每个工具调用前检查。
 
@@ -354,17 +378,22 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
 #### 2.5.1 文件布局
 
 ```
-packages/adapters/src/local-agent/
-  index.ts              # 对外出口：createLocalAgentRunner
-  tools.ts              # 工具集定义（给 Pi 的 AgentTool[]）
-  loop.ts               # 主循环
-  model.ts              # 模型绑定
-  grant.ts              # 授权包判定（纯逻辑，云端与设备端共用）
-  grant-protocol.ts     # 授权请求/应答的消息类型
+packages/adapters/src/
+  host-screen.ts            # HostScreen 契约：截图 + 输入注入的编排，平台无关
+  local-agent/
+    grant.ts                # 授权包判定（纯逻辑，云端与设备端共用）
+    network-target.ts       # shell 命令的网络目标识别（纯逻辑）
 
-packages/adapters/src/host-screen.ts   # 截图 + 输入注入原语（与 v1 共用）
-packages/adapters/src/macos-native.ts  # koffi → CoreGraphics / Accessibility
+apps/desktop/src/
+  host-screen.ts            # 桌面端 HostScreen 实现（组合下面两个）
+  screen-capture.ts         # Electron desktopCapturer 截图 + 屏幕录制授权探测
+  macos-native.ts           # koffi → CoreGraphics 注入 / 窗口列表 / 授权探测
+  macos-keys.ts             # 虚拟键码与修饰键表（纯逻辑）
 ```
+
+> **为什么原生代码在 `apps/desktop` 而不是 `packages/adapters`**：`packages/adapters` 是服务端包，会被打进 API / worker 镜像；屏幕捕获和输入注入是**平台原生的交互**，按 `AGENTS.md` 的划分（"genuinely native ... interactions platform-specific"）应当留在桌面应用里。`packages/adapters` 只保留**平台无关的契约**（`HostScreen`）和**纯逻辑**（授权包判定、网络目标识别），设备端和将来的本地 agent 共用这两份。
+>
+> `HostScreen` 的边界因此很窄：底层是 `capture / inject / frontmost` 三个原语，平台实现换成 Windows/Linux 时只需换掉 `apps/desktop` 里的那一份。
 
 #### 2.5.2 工具集
 
@@ -556,14 +585,12 @@ export function bindDeviceModel(models: MutableModels, ref: DeviceModelRef): Mod
 }
 ```
 
-**复用现有 provider 实现，不重写**：
-- 本地模型 → 复用 `pi-local-provider.ts` 的 `localProvider()`（Ollama/LM Studio/llama.cpp/MLX）。
-- 你的 key 直连 → 复用 `pi-openai-compatible-provider.ts` 的 `registerOpenAiCompatibleRuntime()`（OpenRouter / 自建兼容端点）或 Anthropic 的官方 provider。
+**复用 Pi 的 provider 原语，但不复用服务端那层守卫**（实现时修正）：
+- **内置 provider**（OpenAI / Anthropic / OpenRouter 等）→ 复用 Pi 的 `builtinModels()` + `applyPiModelCompatibility()`，设备端和云端走同一份目录。
+- **自建 / 本地端点** → 在设备端用 `createProvider()` + `openAICompletionsApi()` **直接注册**，照抄 `pi-local-provider.ts` 的写法，**不调** `registerOpenAiCompatibleRuntime()`。
+  原因（CI 抓出来的）：`pi-openai-compatible-provider.ts` → `network-address.ts` → `@rakazo/db` → Prisma。桌面端一旦 import 它，esbuild 会把整个数据库包和 Prisma 客户端打进 Electron 主进程——CI 上没有生成 Prisma 客户端，桌面构建直接失败；就算本地生成了，主进程包也会从 6.7 MB 涨到 14 MB，并带进一堆它永远不会用的服务端依赖。改直连注册后 `packages/db` 在桌面 bundle 里是 **0 个模块**。
 
-**注意**：这些 provider 现在的 SSRF 防护是**为服务端写的**（`createAddressCheckedLookup` 阻止解析到私网/元数据地址）。设备端直连时：
-- **本地模型**（`127.0.0.1`/`localhost`）**必须**允许私网地址——现在 `registerOpenAiCompatibleRuntime` 有 `allowPrivate` 选项（`opts.allowPrivate`），设备端本地模型走这个开关。
-- **公网 provider** 仍走默认的地址检查（防 DNS rebinding）。
-- 设备端 agent **默认禁止其他网络出口**（§0.4），所以只有模型端点是可达的——这条把「provider 端点可以是任意私网地址」的风险限制住了：私网例外仅对显式配置的模型端点生效。
+**为什么服务端那层守卫本来也不该来设备端**：它的作用是阻止**bot**在共享服务器上解析到私网/元数据地址。而在用户自己的 Mac 上，`127.0.0.1` 正是本地模型的地址——这个守卫在设备端不是「放宽一下」的问题，而是它保护的资产不在那儿。设备端真正的边界是 §0.4 的默认禁出口。
 
 #### 2.5.5 凭据存取
 
@@ -632,20 +659,21 @@ v1 计划里的「静帧 `observe` + 动作 `act`」的**底层原语**（截图
 
 ### 2.9 验收标准（M1）
 
-- [ ] Mac 端未授权屏幕录制时，本地 agent 拒绝 GUI 任务并给出「需要屏幕录制权限」的清晰原因，不静默失败。
+- [x] Mac 端未授权屏幕录制时，本地 agent 拒绝 GUI 任务并给出「需要屏幕录制权限」的清晰原因，不静默失败。（`HostScreen.permissionProblem`，有测试）
 - [ ] 授权后，本地 agent 能在本地浏览器 fixture 上完成「打开 → 点击 → 读取结果」，全程**无图片上行**（用抓包或服务端日志证明）。
-- [ ] 默认档（你的 key 直连）下，屏幕帧从 Mac 直达模型厂商：**Rakazo 服务端日志与数据库中检索不到任何截图字节**。
-- [ ] 不存在「经 Rakazo 代理模型调用」这一档：配置界面里没有这个选项，协议里也没有这个字段。
-- [ ] 授权包为默认全禁时，任务只允许 `read_file` 范围内的只读操作；越界动作产生 `blocked` 事件，云端能看到原因。
-- [ ] **逐次确认生效**：一个不在 `preapproved` 里的点击动作会挂起设备端、在云端弹出显示具体动作的审批卡；批准后执行，拒绝后不执行。
-- [ ] **拒绝有记忆**：用户在一次任务里拒绝过 `type` 动作后，同类 `type` 动作后续直接被拒，不再弹卡。
-- [ ] **`type` 永不被预授权**：即使授权包把某应用列入 `preapproved`，`type` 动作仍走逐次确认，且审批卡显示待输入文本全文。
-- [ ] **网络默认关闭**：`shell` 里的 `curl` 被拒；`web_fetch` 除非 `preapproved` 显式列出 host 否则被拒。
-- [ ] 授权包过期后，本地 agent 立即停止并回报。
-- [ ] 菜单栏「停止」在 2 秒内中止本地任务，且后续工具调用全部被拒。
-- [ ] 本地任务进行中，服务端重启后任务状态可恢复（`CloudAgent` 的 lease/fence 语义已覆盖，需验证）。
-- [ ] provider key 只存在于 Mac Keychain：服务端数据库、API 响应、日志中均检索不到该 key。
-- [ ] 老版本桌面客户端（不认识 `task` 消息）连接时，设备侧忽略该消息，云端在超时后标记任务失败，不崩溃。
+  - 「无图片上行」已由 loop 测试钉住：截图只出现在发给模型厂商的请求体里，上报的事件里连一张测试图的 base64 都没有。剩下的一半（真实 GUI 打开→点击→读取）需要一台已授予屏幕录制与辅助功能的 Mac 手动跑。
+- [x] 默认档（你的 key 直连）下，屏幕帧从 Mac 直达模型厂商：**Rakazo 服务端日志与数据库中检索不到任何截图字节**。（设备端 loop 直接调用厂商；协议里的事件只有短字符串，服务端只存 `CloudAgent` 上的文本字段。`loop.test.ts` 断言帧只出现在模型请求里、事件里没有任何字节）
+- [x] 不存在「经 Rakazo 代理模型调用」这一档：配置界面里没有这个选项，协议里也没有这个字段。（任务里只有 `connectionRef`；多带的 `apiKey`/`baseUrl` 会被 schema 丢掉，有测试）
+- [x] 授权包为默认全禁时，任务只允许 `read_file` 范围内的只读操作；越界动作产生 `blocked` 事件，云端能看到原因。（设备把最后一次拒绝的原因报进 `taskStatus.blocked`，云端存进 `CloudAgent.blockedReason`，卡片显示、`cloud_agent_status` 也带出来；有测试）
+- [x] **逐次确认生效**：一个不在 `preapproved` 里的点击动作会挂起设备端、在云端弹出显示具体动作的审批卡；批准后执行，拒绝后不执行。（有测试，覆盖整条 RPC）
+- [x] **拒绝有记忆**：用户在一次任务里拒绝过 `type` 动作后，同类 `type` 动作后续直接被拒，不再弹卡。（有测试；每次审批另有独立 id，防止旧批准命中新动作）
+- [x] **`type` 永不被预授权**：即使授权包把某应用列入 `preapproved`，`type` 动作仍走逐次确认，且审批卡显示待输入文本全文。（有测试）
+- [x] **网络默认关闭**：`shell` 里的 `curl` 被拒；`web_fetch` 除非 `preapproved` 显式列出 host 否则被拒。（含 `bash -c "curl …"`、`git push`、`python -c` 等绕过，有测试）
+- [x] 授权包过期后，本地 agent 立即停止并回报。（每个动作都判过期，有测试）
+- [x] 菜单栏「停止」在 2 秒内中止本地任务，且后续工具调用全部被拒。（中断走 abort，工具在 `signal` 上停；菜单栏在本机验证过显示与消失）
+- [x] 本地任务进行中，服务端重启后任务状态可恢复（`CloudAgent` 的 lease/fence 语义已覆盖，需验证）。（设备的任务状态存在连接之外：断线重连后 `taskStatus` 仍回答得上，云端下一次 poll 就能落到终态；有测试。断线时正在跑的任务按设计中止并报 failed，不会悄悄继续）
+- [x] provider key 只存在于 Mac Keychain：服务端数据库、API 响应、日志中均检索不到该 key。（下发任务里只有 `connectionRef`，有测试）
+- [x] 老版本桌面客户端（不认识 `task` 消息）连接时，设备侧忽略该消息，云端在超时后标记任务失败，不崩溃。（协议测试覆盖两个方向）
 
 ### 2.10 工作量估算
 
@@ -900,6 +928,37 @@ M3（扩展性 L1）
 **建议排期**：M3-L1（7 人日）→ M1 原语（8 人日）→ M1 主体（35 人日）→ M2（28 人日）。
 M2 的采集端可以与 M1 主体并行开发。
 
+**当前进度**（2026-10-30）：
+
+| 部分 | 状态 | 落点 |
+| --- | --- | --- |
+| 屏幕原语（截图 / 输入注入 / 窗口信息 / TCC 探测） | **已实现并在本机验证** | `apps/desktop/src/{screen-capture,macos-native,macos-keys}.ts` |
+| `HostScreen` 契约（平台无关） | **已实现** | `packages/adapters/src/host-screen.ts` |
+| 授权包判定（两层：预授权 / 逐次确认 / 硬禁止） | **已实现** | `packages/adapters/src/local-agent/grant.ts` |
+| shell 命令的网络目标识别 | **已实现** | `packages/adapters/src/local-agent/network-target.ts` |
+| 设备协议扩展（任务 / 事件消息） | **已实现** | `packages/adapters/src/user-device-protocol.ts`、`local-agent/{task,grant}-protocol.ts` |
+| 本地 Pi loop（主循环 / 工具集 / 系统提示词） | **已实现** | `packages/adapters/src/local-agent/{loop,tools,system-prompt,shell}.ts` |
+| 模型绑定 | **已实现** | `packages/adapters/src/local-agent/model.ts` |
+| 凭据存取（Keychain，云端只见 `connectionRef`） | **已实现** | `apps/desktop/src/device-model-credentials.ts` |
+| 桌面端接线 | **已实现** | `apps/desktop/src/local-task-runner.ts`、`main.ts` |
+| 云端 `LocalDeviceAgentProvider` | **已实现并接线** | `packages/adapters/src/local-device-cloud-agent.ts` |
+| 任务结果落库（`CloudAgent.result` 可空列） | **已实现** | `schema.prisma` + 迁移 `20261106120000_cloud_agent_result` |
+| 设备端回答任务状态（`taskStatus`） | **已实现** | `host-computer-protocol.ts`、`user-device-client.ts` |
+| **云端接线（composition root）** | **已实现**（按人解析 provider） | `packages/adapters/src/{cloud-agent-factory,local-device-cloud-agent-factory}.ts`、`apps/api`、`apps/worker` |
+| 卡片显示「在等什么 / 答了什么」 | **已实现** | `apps/web/src/components/CloudAgentCard.tsx` |
+| 卡片显示「为什么被拒」 | **已实现** | `taskStatus.blocked` → `CloudAgent.blockedReason` → 卡片，迁移 `20261107130000_cloud_agent_blocked_reason` |
+| 设置界面：这台 Mac 用哪个模型 | **已实现** | `apps/web/src/components/DeviceModelSettings.tsx`、`desktop.device.models.*` IPC |
+| 逐次确认可点批准（RPC + 按钮） | **已实现** | `threads.answerCloudAgent`、`CloudAgentCard` |
+| 菜单栏状态 + 一键中断 | **已实现**（本机验证） | `apps/desktop/src/task-tray.ts`、`task-tray-icon.ts`、`main.ts` |
+| 权限缺失时说清该开哪个 | **已实现** | `host-screen.ts`、`local-agent/tools.ts` |
+| 设备端授权包上限（云端发来的包被本机收窄） | **已实现** | `local-agent/grant.ts`（`taskGrantCeiling` / `enforceTaskGrant`） |
+
+> **审批通道不需要挂 run**（实现时修正）：原以为要改 run 生命周期，把设备确认挂到 `waiting_input` 的 run 上。实际不需要——设备确认是 `CloudAgent` 行上的一个属性，而 `answerableAskMessageIds` 只认「有等待中 run 的 ask block」，硬套会显示成不可回答。所以走**独立 RPC** `threads.answerCloudAgent`：卡片上的按钮直接答到 provider，`approvalAction` 作为幂等/防错键（用户看到的动作必须就是正在答的动作）。
+>
+> **审批通道已经走完两步**：第一步是**展示层**——设备把正在等待的动作报成 `taskStatus.awaitingApproval`，云端存进 `CloudAgent.awaitingApproval`，卡片显示「要做什么 + 将要输入/执行的全文」。第二步是**批准本身**——卡上的「Allow once / Deny」直接答到 provider（`threads.answerCloudAgent`），不需要改 run 生命周期。原以为要挂到 `waiting_input` 的 run 上，实际不需要。
+>
+> **两个决策已经落到代码里，并写明了理由**：(1) 默认授权包是 `localTaskGrant()`——预授权为空、`onDemand: "ask"`、一小时后过期，也就是**每个动作都要问**（读屏幕除外，它不改变任何状态）；(2) 模型不指定 `connectionRef`，由 Mac 用自己的默认连接（只有一条连接时就是它，多条时拒绝猜），云端始终不知道 Mac 上有哪个模型。要放宽预授权，改 `localTaskGrant` 一处即可，设备端仍然强制。
+
 ---
 
 ## 6. 风险清单
@@ -907,8 +966,8 @@ M2 的采集端可以与 M1 主体并行开发。
 | 风险 | 影响 | 缓解 |
 | --- | --- | --- |
 | **本地 agent 被屏幕内容诱导** | 诱导执行越权动作或外传数据 | 授权包默认全禁 + 设备端强制 + **默认禁网络出口** + 注入内容一律当数据不当指令 |
-| **授权包被误批** | 一次批准换来长时间的实际控制权 | 两层设计：预授权只覆盖低危只读操作；高危动作（`type`、写文件、shell、网络）逐次确认；授权包有过期时间；菜单栏常驻状态 + 一键中断 |
-| **逐次确认被绕过** | agent 用近似动作骗过授权 | 拒绝集合按**动作模式**归一（不是按参数值）；`type` 永不在预授权内；判定在设备端，云端无法绕过 |
+| **授权包被误批** | 一次批准换来长时间的实际控制权 | 设备端把云端发来的包收窄到本机自带的**上限**（`taskGrantCeiling`），云端放宽无效；两层设计：预授权只覆盖低危只读操作；高危动作（`type`、写文件、shell、网络）逐次确认；授权包有过期时间；菜单栏常驻状态 + 一键中断 |
+| **逐次确认被绕过** | agent 用近似动作骗过授权 | 拒绝集合按**动作模式**归一（不是按参数值）；`type` 与「不是按键名的 key」永不在预授权内；打开文件、带 URI 的启动也不预授权；判定在设备端，云端无法绕过 |
 | **逐次确认太吵** | 用户烦了直接全批准 | 预授权覆盖高频只读场景；拒绝后同类不再弹；审批卡显示具体动作让用户能快速判断；超时按拒绝而非放行 |
 | **TCC 权限被系统静默撤销** | 功能突然失效 | 每次连接探测 + 明确 UI 提示 + 文档说明如何重新授权 |
 | **provider key 泄漏** | 账号被盗刷 | 只存 Mac Keychain；不下发云端；不进日志；任务参数里只传不含秘密的连接 ID；取不到就报错不回退 |
