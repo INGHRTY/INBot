@@ -8,7 +8,7 @@ import type { DeviceTokenCipher } from "./user-device.js";
 /** A cipher that hides the key from anyone who opens the file. */
 const cipher: DeviceTokenCipher = {
   available: async () => true,
-  encrypt: async (value) => Buffer.from(Buffer.from(value).reverse()).toString("base64"),
+  encrypt: async (value) => Buffer.from(value).reverse(),
   decrypt: async (value) =>
     Buffer.from(Buffer.from(value.toString("base64"), "base64").reverse()).toString("utf8"),
 };

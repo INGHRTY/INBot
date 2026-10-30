@@ -16,7 +16,7 @@ import type {
   SecretStore,
   WebProvider,
 } from "@rakazo/adapter-kit";
-import type { PrismaClient, ThreadEvents } from "@rakazo/db";
+import type { PrismaClient, RunLease, ThreadEvents } from "@rakazo/db";
 import type { CloudAgentProviders } from "./cloud-agent-factory.js";
 import type { McpStdioPolicy } from "./mcp-transport.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
@@ -67,8 +67,6 @@ export interface ExecutorDeps {
   secretHttp?: RemoteTransportDependencies;
   /** Allow RFC1918 / Docker-network MCP URLs when the operator enabled the escape. */
   mcpAllowPrivateEndpoint?: boolean;
-  /** Which stdio MCP servers this deployment runs; absent runs none. */
-  mcpStdio?: McpStdioPolicy;
   /** Remote cloud coding agents. Null/omit means tools stay uninjected. */
   cloudAgent?: CloudAgentProviders | null;
   /** The deployment's payment wallet. Null/omit means purchase tools stay uninjected. */
@@ -84,4 +82,6 @@ export interface ExecutorDeps {
   userDevices?: UserDeviceGateway;
   /** Aborted when createApp stop() begins so in-flight continueRun boot waits exit promptly. */
   shutdownSignal?: AbortSignal;
+  /** Set by withRunLease for one attempt; that run's history writes carry its lease. */
+  runLease?: RunLease & { runId: string };
 }

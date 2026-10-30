@@ -3,6 +3,8 @@ import type { LookupFunction } from "node:net";
 import type { Model, MutableModels, Provider, ProviderStreams } from "@earendil-works/pi-ai";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import type { ModelApiProtocol } from "@rakazo/contracts";
 import {
   DEFAULT_MODEL_CONTEXT_WINDOW,
   DEFAULT_MODEL_MAX_TOKENS,
@@ -69,11 +71,12 @@ export function openAiCompatibleModel(
   acceptsImages = false,
   maxTokens = DEFAULT_MODEL_MAX_TOKENS,
   contextWindow = DEFAULT_MODEL_CONTEXT_WINDOW,
-): Model<"openai-completions"> {
+  apiProtocol: ModelApiProtocol = "chat-completions",
+): Model<"openai-completions" | "openai-responses"> {
   return {
     id,
     name: id,
-    api: "openai-completions",
+    api: apiProtocol === "responses" ? "openai-responses" : "openai-completions",
     provider: OPENAI_COMPATIBLE_PROVIDER_ID,
     baseUrl,
     reasoning,
@@ -93,20 +96,21 @@ export function openAiCompatibleModel(
 }
 
 function openAiCompatibleProvider(
-  models: Model<"openai-completions">[],
+  models: Model<"openai-completions" | "openai-responses">[],
   policy: { allowPrivate?: boolean; headers?: Record<string, string> } = {},
 ): Provider {
-  const api = openAICompletionsApi();
+  const api = (protocol: string) =>
+    protocol === "openai-responses" ? openAIResponsesApi() : openAICompletionsApi();
   // Guard the fetch the caller supplied (the runtime's seam for tests) or the
   // dispatcher-matched default; never the bare global.
   const safeApi: ProviderStreams = {
     stream: (model, context, options) =>
-      api.stream(model, context, {
+      api(model.api).stream(model, context, {
         ...options,
         fetch: createOpenAiCompatibleFetch(options?.fetch, undefined, policy),
       }),
     streamSimple: (model, context, options) =>
-      api.streamSimple(model, context, {
+      api(model.api).streamSimple(model, context, {
         ...options,
         fetch: createOpenAiCompatibleFetch(options?.fetch, undefined, policy),
       }),
@@ -328,6 +332,7 @@ export function registerOpenAiCompatibleRuntime(
   opts: {
     modelId: string;
     baseUrl: string;
+    apiProtocol?: ModelApiProtocol;
     headers?: Record<string, string>;
     reasoning?: boolean;
     acceptsImages?: boolean;
@@ -350,6 +355,7 @@ export function registerOpenAiCompatibleRuntime(
           acceptsImages,
           opts.maxTokens,
           opts.contextWindow,
+          opts.apiProtocol,
         ),
       ],
       { allowPrivate: opts.allowPrivate, headers: opts.headers },

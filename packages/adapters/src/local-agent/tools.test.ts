@@ -215,18 +215,21 @@ describe("local agent tools", () => {
   });
 
   it("never preapproves typing, and shows the exact text it would type", async () => {
-    const { deps: options, asked } = deps({
+    const requests: Array<{ action?: string; detail?: string }> = [];
+    const { deps: options } = deps({
       grant: grant({ preapproved: { apps: ["Safari"] } }),
+      approve: async (request) => {
+        requests.push(request);
+        return { approvalId: request.approvalId, allowed: true };
+      },
     });
-    const tools = localAgentTools(options);
-    await tool("computer_act", tools).execute("t", {
+    await tool("computer_act", localAgentTools(options)).execute("t", {
       actions: [{ kind: "type", text: "hunter2" }],
     });
     // Even with the application preapproved, typing still asks, with the text in hand.
-    expect(asked).toHaveLength(1);
-    const request = options.approve.mock.calls[0]![0] as { action?: string; detail?: string };
-    expect(request.action).toBe("type");
-    expect(request.detail).toBe("hunter2");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.action).toBe("type");
+    expect(requests[0]?.detail).toBe("hunter2");
   });
 
   it("asks before a shell command that reaches an unlisted host", async () => {
