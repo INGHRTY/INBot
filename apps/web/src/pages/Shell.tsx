@@ -857,6 +857,7 @@ function SpaceShell() {
               onLoadOlder={loadOlder}
               onOpenBot={openBot}
               onAnswer={composer.answerMessage}
+              onAnswerCloudAgent={composer.answerCloudAgent}
               onReply={(message) => {
                 composer.setReplyTarget(message);
                 composer.setReplyQuote(null);

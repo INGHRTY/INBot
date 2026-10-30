@@ -16,6 +16,7 @@ import type {
   ConnectorRegistry,
   FaviconResolver,
   IntegrationProviderSettings,
+  LocalDeviceCloudAgentProvider,
   McpConnector,
   McpOAuthBroker,
   MemoryProviderResolver,
@@ -27,6 +28,7 @@ import type {
   PushTokenStore,
   RemoteConnectorDependencies,
   TicketChangeNotifier,
+  UserDeviceGateway,
   verifyModelServesAgents,
 } from "@rakazo/adapters";
 import type { Auth } from "@rakazo/auth";
@@ -60,6 +62,10 @@ export interface RouterDeps {
   pushTokens: PushTokenStore;
   analytics?: ProductAnalytics;
   cloudAgent?: CloudAgentConnection | null;
+  /** The requesting user's connected computer, so a task can be started on it. */
+  userDevices?: UserDeviceGateway;
+  /** Answers a task running on that computer when it stops at an action. */
+  localDeviceAgents?: LocalDeviceCloudAgentProvider;
   /** The deployment's wallet provider; absent hides purchases. */
   paymentWallet?: PaymentWalletProvider | null;
   prisma: PrismaClient;

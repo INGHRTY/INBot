@@ -221,6 +221,41 @@ export function threadsRoutes(ctx: RouterContext) {
         await stopThreadRuns(deps, context.actor, target);
         return { ok: true as const };
       }),
+      answerCloudAgent: authed.threads.answerCloudAgent.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        const agent = await deps.prisma.cloudAgent.findFirst({
+          where: {
+            id: input.agentId,
+            spaceId: context.actor.spaceId,
+            userId: context.actor.userId,
+            threadId: target.threadId,
+          },
+          select: { id: true, awaitingApproval: true, status: true },
+        });
+        if (!agent || agent.status !== "running") {
+          throw new ORPCError("CONFLICT", { message: "That task is no longer waiting" });
+        }
+        // The card the person saw must be the action they are answering, so a card that
+        // changed underneath them cannot approve something else.
+        const shown = agent.awaitingApproval as { action?: unknown } | null;
+        if (typeof shown?.action !== "string" || shown.action !== input.approvalAction) {
+          throw new ORPCError("CONFLICT", { message: "That task is asking something else now" });
+        }
+        const provider = deps.localDeviceAgents;
+        if (!provider) throw new ORPCError("CONFLICT", { message: "That task cannot be answered" });
+        await provider.decide(
+          agent.id,
+          { approvalId: input.approvalAction, allowed: input.allowed },
+          {
+            operationId: agent.id,
+            traceId: agent.id,
+            spaceId: context.actor.spaceId,
+            userId: context.actor.userId,
+            signal: context.signal ?? new AbortController().signal,
+          },
+        );
+        return { ok: true as const };
+      }),
       clear: authed.threads.clear.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         const contextBotId = target.kind === "bot" ? target.botId : target.memberBotIds[0];

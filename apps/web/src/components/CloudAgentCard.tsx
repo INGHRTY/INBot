@@ -2,12 +2,16 @@ import { Trans } from "@lingui/react/macro";
 import type { MessageBlock } from "@rakazo/contracts";
 import { cloudAgentHttpsUrl } from "@rakazo/core";
 import { Badge } from "@rakazo/ui-web/components/ui/badge";
+import { Button } from "@rakazo/ui-web/components/ui/button";
 import { Card, CardContent } from "@rakazo/ui-web/components/ui/card";
 
 export function CloudAgentCard({
   block,
+  onAnswer,
 }: {
   block: Extract<MessageBlock, { kind: "cloud_agent" }>;
+  /** Answers the action the task is waiting on. Absent on a card nobody may answer. */
+  onAnswer?: (allowed: boolean) => void;
 }) {
   const prHref = cloudAgentHttpsUrl(block.prUrl);
   const href = prHref ?? cloudAgentHttpsUrl(block.url);
@@ -62,6 +66,16 @@ export function CloudAgentCard({
               >
                 {block.awaitingApproval.detail}
               </span>
+            ) : null}
+            {onAnswer ? (
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => onAnswer(true)}>
+                  <Trans>Allow once</Trans>
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => onAnswer(false)}>
+                  <Trans>Deny</Trans>
+                </Button>
+              </div>
             ) : null}
           </div>
         ) : block.result ? (

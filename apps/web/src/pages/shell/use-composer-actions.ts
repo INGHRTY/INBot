@@ -233,6 +233,28 @@ export function useComposerActions({
     },
     [],
   );
+  const answerCloudAgent = useCallback(
+    async (agentId: string, approvalAction: string, allowed: boolean) => {
+      const botId = activeBotId.current;
+      const groupId = activeGroupId.current;
+      if (!botId && !groupId) return;
+      clearReadBoundary();
+      await rpc.threads.answerCloudAgent({
+        ...(groupId ? { groupId } : { botId: botId! }),
+        agentId,
+        approvalAction,
+        allowed,
+      });
+      try {
+        if (groupId && activeGroupId.current === groupId) {
+          await refreshGroupThreadRef.current(groupId);
+        } else if (botId && activeBotId.current === botId) {
+          await refreshThreadRef.current(botId);
+        }
+      } catch {}
+    },
+    [],
+  );
   const reactToMessage = useCallback(
     async (message: ThreadMessage, reaction: MessageReaction) => {
       const botId = activeBotId.current;
@@ -586,6 +608,7 @@ export function useComposerActions({
     sendMessage,
     stopRun,
     answerMessage,
+    answerCloudAgent,
     reactToMessage,
     sendError,
     setSendError,

@@ -945,9 +945,12 @@ M2 的采集端可以与 M1 主体并行开发。
 | 设备端回答任务状态（`taskStatus`） | **已实现** | `host-computer-protocol.ts`、`user-device-client.ts` |
 | **云端接线（composition root）** | 未开始，**卡在审批卡** | `apps/api`、`apps/worker` |
 | 卡片显示「在等什么 / 答了什么」 | **已实现** | `apps/web/src/components/CloudAgentCard.tsx` |
-| 逐次确认真正可点批准（run 挂起） | 未开始（见下） | `apps/api`、`apps/web` |
+| 逐次确认可点批准（RPC + 按钮） | **已实现** | `threads.answerCloudAgent`、`CloudAgentCard` |
+| provider 接进 composition root | 未开始（见下） | `apps/api` |
 | 菜单栏常驻状态 + 一键中断 | 未开始 | `apps/desktop` |
 
+> **审批通道不需要挂 run**（实现时修正）：原以为要改 run 生命周期，把设备确认挂到 `waiting_input` 的 run 上。实际不需要——设备确认是 `CloudAgent` 行上的一个属性，而 `answerableAskMessageIds` 只认「有等待中 run 的 ask block」，硬套会显示成不可回答。所以走**独立 RPC** `threads.answerCloudAgent`：卡片上的按钮直接答到 provider，`approvalAction` 作为幂等/防错键（用户看到的动作必须就是正在答的动作）。
+>
 > **审批通道分两步走**：第一步（已做）是**展示层**——设备把正在等待的动作报成 `taskStatus.awaitingApproval`，云端存进 `CloudAgent.awaitingApproval`，卡片显示「要做什么 + 将要输入/执行的全文」。这样任务停在第一次点击时，你在网页或手机上能看见它在等什么。第二步（未做）是把设备确认接到一个真正 `waiting_input` 的 run 上，让网页上能直接点批准——那要改 run 生命周期，因为 `cloud_agent_launch` 现在是「发完就返回」，而设备上的确认发生在任务内部。
 >
 > **为什么 provider 实现了却还没接线**：设备端的授权包默认 `preapproved` 为空、`onDemand: "ask"`，也就是**每个动作都要问**。云端目前没有把设备的逐次确认请求送到用户面前的通道（审批卡 UI 未做），接上线只会让任务在第一个动作上停住直到超时。所以 provider 先做到「可构造、有测试、协议与存储就位」，等审批卡通道做完再接 composition root；届时 `cloudAgent` 依赖从「一个连接」改成按 (spaceId, userId) 解析（§2.2 第 1 点）。

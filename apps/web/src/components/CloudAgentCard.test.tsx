@@ -62,6 +62,27 @@ it("shows what the task answered", () => {
   expect(view.textContent).toContain("Safari is open.");
 });
 
+it("answers the action it showed, not whatever the task asks next", async () => {
+  const answers: Array<[string, boolean]> = [];
+  const block = card({
+    awaitingApproval: { action: "click", summary: "Click in Safari" },
+  });
+  act(() =>
+    root.render(
+      <CloudAgentCard
+        block={block}
+        onAnswer={(allowed) => {
+          answers.push([block.awaitingApproval!.action, allowed]);
+        }}
+      />,
+    ),
+  );
+  const allow = container.querySelector("button");
+  expect(allow?.textContent).toBe("Allow once");
+  act(() => allow?.click());
+  expect(answers).toEqual([["click", true]]);
+});
+
 it("shows neither while the task has nothing to report", () => {
   const view = render(card());
   expect(view.querySelector("[data-testid='cloud-agent-awaiting']")).toBeNull();
