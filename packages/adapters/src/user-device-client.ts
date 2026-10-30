@@ -64,6 +64,8 @@ export interface UserDeviceClientOptions {
    * a refusal, so this bounds how long the computer sits stopped.
    */
   approvalTimeoutMs?: number;
+  /** Told when a task starts and when it ends, so the app can show that this computer is busy. */
+  onTask?: (task: { taskId: string; running: boolean }) => void;
   retryMs?: { min: number; max: number };
 }
 
@@ -101,6 +103,13 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
   };
   const runner = createHostComputerRunner({ root: options.root, tasks: taskReader });
   runner.setEnabled(true);
+  function notifyTask(taskId: string, running: boolean) {
+    try {
+      options.onTask?.({ taskId, running });
+    } catch {
+      // A listener that throws must not stop the task from running.
+    }
+  }
   const url = new URL(USER_DEVICE_CONNECT_PATH, options.serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   let stopped = false;
@@ -108,18 +117,27 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
   let socket: WebSocket | undefined;
   let reconnectTimer: NodeJS.Timeout | undefined;
   let refuseWaiting: (() => void) | undefined;
+  /** Stops the tasks running on the current connection, without dropping the connection. */
+  let abortTasks: (() => void) | undefined;
 
   function stop() {
     if (stopped) return;
     stopped = true;
     clearTimeout(reconnectTimer);
     runner.close();
+    abortTasks = undefined;
     socket?.terminate();
+  }
+
+  /** Stops every task this computer is running. The connection stays open and keeps serving. */
+  function stopTasks() {
+    abortTasks?.();
   }
 
   function cancelAll() {
     if (stopped) return;
     refuseWaiting?.();
+    abortTasks?.();
     runner.setEnabled(false);
     runner.setEnabled(true);
   }
@@ -164,6 +182,9 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         void send(id, { error: NOT_ALLOWED_MESSAGE }).catch(() => undefined);
       authorizing.clear();
     };
+    abortTasks = () => {
+      for (const task of runningTasks.values()) task.controller.abort();
+    };
 
     ws.on("unexpected-response", (request, response) => {
       request.destroy();
@@ -200,6 +221,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       if (socket === ws) {
         socket = undefined;
         refuseWaiting = undefined;
+        abortTasks = undefined;
       }
       if (openedAt && Date.now() - openedAt >= PING_INTERVAL_MS) attempt = 0;
       scheduleReconnect();
@@ -340,6 +362,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       };
       runningTasks.set(id, running);
       taskStatuses.set(task.taskId, { taskId: task.taskId, state: "running" });
+      notifyTask(task.taskId, true);
       const control: UserDeviceTaskControl = {
         signal: running.controller.signal,
         event(event) {
@@ -447,12 +470,13 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         }
         running.approvals.clear();
         if (runningTasks.get(id) === running) runningTasks.delete(id);
+        notifyTask(task.taskId, false);
       }
     }
   }
 
   connect();
-  return { close: stop, cancelAll };
+  return { close: stop, cancelAll, stopTasks };
 }
 
 /**

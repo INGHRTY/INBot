@@ -376,7 +376,10 @@ describe("device tasks", () => {
     await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
   });
 
-  function start(runTask: UserDeviceTaskRunner) {
+  function start(
+    runTask: UserDeviceTaskRunner,
+    onTask?: (task: { taskId: string; running: boolean }) => void,
+  ) {
     client = startUserDeviceClient({
       serverUrl,
       token,
@@ -385,6 +388,7 @@ describe("device tasks", () => {
       authorize: async () => true,
       runTask,
       approvalTimeoutMs: 200,
+      ...(onTask ? { onTask } : {}),
     });
   }
   async function connection() {
@@ -538,6 +542,45 @@ describe("device tasks", () => {
     await until(() => answered !== undefined);
     // A question nobody answered is a refusal, never a silent allow.
     expect(answered).toBe(false);
+  });
+
+  it("stops every running task on request and keeps the connection", async () => {
+    let stopped = false;
+    const seen: Array<{ taskId: string; running: boolean }> = [];
+    start(
+      {
+        async run(_task, control) {
+          await new Promise<void>((resolve) => {
+            control.signal.addEventListener("abort", () => {
+              stopped = true;
+              resolve();
+            });
+          });
+          return { answer: "stopped" };
+        },
+      },
+      (task) => seen.push(task),
+    );
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() => seen.length === 1);
+    client!.stopTasks();
+    await until(() => stopped);
+    // The connection survives, so a request still gets an answer.
+    ws.send(
+      JSON.stringify({
+        type: "request",
+        id: "env",
+        request: { method: "environment", botId: "x" },
+      }),
+    );
+    await until(() => received.some((message) => message.type === "frame"));
+    await until(() => seen.length === 2);
+    expect(seen).toEqual([
+      { taskId: "task-1", running: true },
+      { taskId: "task-1", running: false },
+    ]);
   });
 
   it("reports that it cannot run a task when no runner is set", async () => {

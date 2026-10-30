@@ -88,7 +88,9 @@ export function toComputerStatus(
     takeoverRequested: Boolean(computer?.controlRunId),
     // A desktop computer is the person's own Mac, shown natively there; it has no stream to embed.
     screenAvailable:
-      kind !== "desktop" && !computer?.maintenanceId && (state === "running" || state === "booting"),
+      kind !== "desktop" &&
+      !computer?.maintenanceId &&
+      (state === "running" || state === "booting"),
     screenWidth: screen.width,
     screenHeight: screen.height,
     homeRevision: computer?.homeRevision ?? null,

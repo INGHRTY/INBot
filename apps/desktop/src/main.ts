@@ -17,6 +17,7 @@ import {
   screen,
   session,
   shell,
+  Tray,
 } from "electron";
 import type { AppDocumentState } from "./app-document-state.js";
 import { waitForMountedAppDocument } from "./app-document-state.js";
@@ -73,6 +74,8 @@ import {
   sessionPartitionForServerUrl,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
+import { createTaskTray } from "./task-tray.js";
+import { taskTrayIcon } from "./task-tray-icon.js";
 import type { UserDeviceAccess } from "./user-device.js";
 import { createUserDeviceAccess, deviceName } from "./user-device.js";
 import { oauthPopupSessionPreferences, shouldOpenInAppPopup } from "./window-open.js";
@@ -140,6 +143,7 @@ let localStack: LocalStackController;
 let hostComputer: Awaited<ReturnType<typeof prepareHostComputer>> | undefined;
 let requestingComputerAccess = false;
 let userDevices: UserDeviceAccess | undefined;
+let taskTray: ReturnType<typeof createTaskTray> | undefined;
 
 markOnce("rk:main:module-evaluated");
 if (PERFORMANCE_USER_DATA) {
@@ -602,6 +606,27 @@ function showSetupWindow(error: string | null = null) {
   win.show();
   win.focus();
   return win;
+}
+
+/** Brings the app forward from the menu bar, whichever window is showing. */
+function revealMainWindow() {
+  if (setupWindow !== null && !setupWindow.isDestroyed()) {
+    setupWindow.show();
+    setupWindow.focus();
+    return;
+  }
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    clearTimeout(warmWindowTimer);
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  if (appOpener.busy()) return;
+  if (currentTargetUrl === null) showSetupWindow(setupError);
+  else
+    void appOpener.open(currentTargetUrl).then((opened) => {
+      if (opened) commitPendingAppSwitch();
+    });
 }
 
 function restoreAppWindowAfterSetup() {
@@ -1159,9 +1184,17 @@ app.whenReady().then(async () => {
   } catch {
     /* Local access fails closed; Docker remains available. */
   }
+  taskTray = createTaskTray({
+    create: () => new Tray(taskTrayIcon()),
+    icon: taskTrayIcon(),
+    buildMenu: (items) => Menu.buildFromTemplate(items),
+    stop: () => userDevices?.stopTasks(),
+    show: () => revealMainWindow(),
+  });
   userDevices = createUserDeviceAccess({
     userDataDir,
     cipher: deviceTokenCipher(),
+    onTask: (task) => taskTray?.update(task.taskId, task.running),
     device: async () => ({
       name: await deviceName(),
       platform:
@@ -1532,25 +1565,7 @@ app.whenReady().then(async () => {
   });
 
   // Register before startup awaits so macOS dock clicks during probe/open are handled.
-  app.on("activate", () => {
-    if (setupWindow !== null && !setupWindow.isDestroyed()) {
-      setupWindow.show();
-      setupWindow.focus();
-      return;
-    }
-    if (mainWindow !== null && !mainWindow.isDestroyed()) {
-      clearTimeout(warmWindowTimer);
-      mainWindow.show();
-      mainWindow.focus();
-      return;
-    }
-    if (appOpener.busy()) return;
-    if (currentTargetUrl === null) showSetupWindow(setupError);
-    else
-      void appOpener.open(currentTargetUrl).then((opened) => {
-        if (opened) commitPendingAppSwitch();
-      });
-  });
+  app.on("activate", () => revealMainWindow());
 
   if (target.kind === "setup") {
     showSetupWindow();
@@ -1603,5 +1618,6 @@ app.on("before-quit", () => {
   hostComputer?.activate(false);
   void hostComputer?.close();
   userDevices?.close();
+  taskTray?.close();
   localStack?.abort();
 });
