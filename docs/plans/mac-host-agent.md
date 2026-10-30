@@ -303,9 +303,14 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
    → `cloudAgentsEnabled` 的 Space 绑定对设备 provider 不适用（设备属于用户，不属于 Space），需要一条「该用户在本 Space 内有已授权设备」的判定。
 
 2. **`CloudAgent` 表的行状态**已经够用：`launchRequest` 存任务、`remoteId` 存 deviceId、`latestRunId` 存 taskId、`status`、`cancelRequested`、`generation`（重试代数）、`leaseToken`（轮询租约）、`wakeGeneration`（终态唤醒）。
-   → 表结构**不需要改**。只有 `launchRequest` 的 schema 要放宽（现在强制 `prompt` + 可选 `repository`/`openPr`）。用 `cloudAgentLaunchSchema` 扩一个 `kind: "local-device"` 分支即可。
+   → 只有 `launchRequest` 的 schema 要放宽（现在强制 `prompt` + 可选 `repository`/`openPr`）。用 `cloudAgentLaunchSchema` 扩一个 `kind: "local-device"` 分支即可。
 
-3. **审批**：`cloud_agent_launch` 已经在 `action-approval.ts:41` 的 `EXPLICIT_APPROVAL` 名单里（每次都要问）。设备任务沿用这个位置，但审批卡要显示**授权包内容**（不是一句「允许启动云 agent」）。审批规则匹配按工具名走，够用。
+   **但实测核查后有一处必须补：任务的答案没有地方落。** `CloudAgentSnapshot` 只有 `title / status / url / branch / prUrl / latestRunId`，`snapshotData()` 也只写这几个字段（`cloud-agent-poll.ts:238`）。Cursor 那边「答案」是远端仓库里的 PR，云端不需要存；设备任务的答案是**一段文本**，而 worker 里的 `get()` 拿不到 API 进程活着的那条 socket 会话，所以必须**持久化**，否则终态唤醒的 bot 只看到 `status = finished`，读不到任何内容。
+   → 建议：`CloudAgent` 加一个 `result String?`（新增可空列，按 `AGENTS.md` 是安全迁移），`CloudAgentSnapshot` 加 `result?: string`，`snapshotData()` 写它，`cloud_agent_status` 读它。这是本轮唯一需要动的 schema。
+
+3. **`get()` 的调用面**：`pollCloudAgent` 在 `launch` 之后的每一次轮询都调 `provider.get(remoteId)`，而 `launch` 返回的 `UserDeviceTaskHandle` 是进程内的、随 `launch` 那次调用结束就没了。因此 `get()` 不能依赖 handle，只能**按需向设备重问一次**：新增一条 `taskStatus` 请求（设备回「还在跑 / 已结束 + 答案」），由现有的同步请求通道（`request`/`frame`）承载，不占用任务会话。
+
+4. **审批**：`cloud_agent_launch` 已经在 `action-approval.ts:41` 的 `EXPLICIT_APPROVAL` 名单里（每次都要问）。设备任务沿用这个位置，但审批卡要显示**授权包内容**（不是一句「允许启动云 agent」）。审批规则匹配按工具名走，够用。
 
 ### 2.3 授权包（TaskGrant）
 
@@ -344,7 +349,11 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
    - **应用启动**：`open -a <name>` / `open <path>`。
    - **注意**：macOS 27 的系统框架只在 dyld 共享缓存里，磁盘上没有 `Versions/C`，只有 `Versions/A`。所以框架路径一律用**不带版本号**的软链接（`/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics`），写死 `Versions/C` 会在新系统上直接失败。
 
-   **已在本机验证**（macOS 27.2，Electron 45）：截图按请求尺寸返回、坐标空间与 `CGEvent` 一致（Electron 的 `getCursorScreenPoint()` 与 `CGEventGetLocation()` 数值相同）、中文与 ASCII 文本注入成功、`⌘A` 修饰键成功、按钮点击成功。
+   **已在本机验证**（macOS 27.2，Electron 45）：
+- 截图按请求尺寸返回；Electron `getCursorScreenPoint()` 与 `CGEventGetLocation()` 数值相同（同一坐标空间）。
+- 中文与 ASCII 文本注入成功、`⌘A` 修饰键成功、按钮点击成功。
+- **整条本地 agent 链路**：真实桌面 + 本地假模型跑完一次任务——
+  `computer_observe` 拿到真实截图 → 模型要求点击 → 设备端弹出**带具体动作**的审批请求（`Click in T3 Code (Nightly) at (40, 40)`）→ 批准后执行 → 返回答案。上报的 `step` 摘要只有「Used the computer in …」，**不含坐标**。
 
 3. **授权包执行器**（§2.3）。在每个工具调用前检查。
 
