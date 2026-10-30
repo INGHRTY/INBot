@@ -19,6 +19,8 @@ const PING_INTERVAL_MS = 30_000;
 const BUSY_MESSAGE = "Local computer is busy. Try again shortly.";
 const NOT_ALLOWED_MESSAGE = "Not allowed on this computer";
 const NO_TASKS_MESSAGE = "This computer cannot run tasks yet.";
+/** How long the computer waits for an answer before treating it as a refusal. */
+const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 
 /** What a running task can do while it runs. */
 export interface UserDeviceTaskControl {
@@ -57,6 +59,11 @@ export interface UserDeviceClientOptions {
   authorize: () => Promise<boolean>;
   /** Runs tasks the cloud sends. Without one the device reports that it cannot run them. */
   runTask?: UserDeviceTaskRunner;
+  /**
+   * How long to wait for an answer to a permission request. A question nobody answers is
+   * a refusal, so this bounds how long the computer sits stopped.
+   */
+  approvalTimeoutMs?: number;
   retryMs?: { min: number; max: number };
 }
 
@@ -362,9 +369,12 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
             });
           }
           await sendTaskMessage({ type: "taskApproval", id, request }).catch(() => undefined);
+          // The cloud owns the card. If it never answers, the task stops rather than
+          // holding the computer's screen forever.
           const decision = await Promise.race([
             answer,
             aborted(running.controller.signal).then(() => undefined),
+            timeout(options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS).then(() => undefined),
           ]);
           running.approvals.delete(request.approvalId);
           const after = taskStatuses.get(task.taskId);
@@ -474,6 +484,14 @@ function deliverInstruction(task: RunningTask, text: string) {
     return;
   }
   task.instructions.push(text);
+}
+
+/** Resolves after a delay, so a waiting approval does not hang forever. */
+function timeout(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 /** Rejects when the task is cancelled, so a waiting approval does not hang. */

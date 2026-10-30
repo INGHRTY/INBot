@@ -384,6 +384,7 @@ describe("device tasks", () => {
       onRevoked: () => undefined,
       authorize: async () => true,
       runTask,
+      approvalTimeoutMs: 200,
     });
   }
   async function connection() {
@@ -514,6 +515,29 @@ describe("device tasks", () => {
     await running;
     ws.send(JSON.stringify({ type: "taskCancel", id: "t1" }));
     await until(() => stopped);
+  });
+
+  it("stops waiting for an approval nobody answers", async () => {
+    let answered: boolean | undefined;
+    start({
+      async run(_task, control) {
+        const decision = await control.approve({
+          approvalId: "a1",
+          at: "2026-01-01T00:00:00.000Z",
+          action: "click",
+          summary: "Click in Safari",
+        });
+        answered = decision.allowed;
+        return { answer: "done" };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() => received.some((message) => message.type === "taskApproval"));
+    await until(() => answered !== undefined);
+    // A question nobody answered is a refusal, never a silent allow.
+    expect(answered).toBe(false);
   });
 
   it("reports that it cannot run a task when no runner is set", async () => {

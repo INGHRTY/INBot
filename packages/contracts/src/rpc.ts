@@ -524,6 +524,20 @@ export const appContract = {
       )
       .output(z.object({ ok: z.literal(true), runIds: z.array(Id).optional() })),
     stop: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
+    /**
+     * Answers a task running on the person's own computer when it stops at an action it
+     * may not take alone. The task has no waiting run, so this is not the ask card.
+     */
+    answerCloudAgent: oc
+      .input(
+        threadTarget.safeExtend({
+          agentId: Id,
+          /** The action the card showed, so a stale answer cannot approve something else. */
+          approvalAction: z.string().min(1).max(64),
+          allowed: z.boolean(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
     followUp: oc
       .input(
         threadTarget.safeExtend({
