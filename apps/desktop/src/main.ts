@@ -36,6 +36,7 @@ import {
   stackDir,
   stackResourceDir,
 } from "./local-stack.js";
+import { createDesktopTaskRunner } from "./local-task-runner.js";
 import {
   configureDesktopMonitoring,
   disableDesktopMonitoring,
@@ -1178,6 +1179,10 @@ app.whenReady().then(async () => {
         serverUrl: origin,
         token,
         root: path.join(userDataDir, "computers"),
+        // Only macOS can drive the screen today, so only macOS runs tasks.
+        ...(process.platform === "darwin"
+          ? { runTask: createDesktopTaskRunner({ userDataDir, cipher: deviceTokenCipher() }) }
+          : {}),
         ...events,
       }),
   });

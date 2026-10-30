@@ -929,8 +929,13 @@ M2 的采集端可以与 M1 主体并行开发。
 | 授权包判定（两层：预授权 / 逐次确认 / 硬禁止） | **已实现** | `packages/adapters/src/local-agent/grant.ts` |
 | shell 命令的网络目标识别 | **已实现** | `packages/adapters/src/local-agent/network-target.ts` |
 | 设备协议扩展（任务 / 事件消息） | **已实现** | `packages/adapters/src/user-device-protocol.ts`、`local-agent/{task,grant}-protocol.ts` |
-| 本地 Pi loop / 工具集 / 模型绑定 / 凭据 | 未开始 | `packages/adapters/src/local-agent/` |
+| 本地 Pi loop（主循环 / 工具集 / 系统提示词） | **已实现** | `packages/adapters/src/local-agent/{loop,tools,system-prompt,shell}.ts` |
+| 模型绑定 | **已实现** | `packages/adapters/src/local-agent/model.ts` |
+| 凭据存取（Keychain，云端只见 `connectionRef`） | **已实现** | `apps/desktop/src/device-model-credentials.ts` |
+| 桌面端接线 | **已实现** | `apps/desktop/src/local-task-runner.ts`、`main.ts` |
 | 云端 `LocalDeviceAgentProvider` | 未开始 | `packages/adapters/src/` |
+| 逐次确认的审批卡 UI | 未开始（协议已通，界面未做） | `apps/web` |
+| 菜单栏常驻状态 + 一键中断 | 未开始 | `apps/desktop` |
 
 ---
 
