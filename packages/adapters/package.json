@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./host-computer-server": "./src/host-computer-server.ts",
+    "./host-screen": "./src/host-screen.ts",
     "./user-device-client": "./src/user-device-client.ts"
   },
   "scripts": {

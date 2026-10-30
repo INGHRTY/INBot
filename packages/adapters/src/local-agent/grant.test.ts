@@ -1,0 +1,188 @@
+import { describe, expect, it } from "vitest";
+import { checkGrant, emptyTaskGrant, type TaskGrant } from "./grant.js";
+
+const now = new Date("2026-01-01T00:00:00.000Z");
+
+function grant(overrides: Partial<TaskGrant> = {}): TaskGrant {
+  return {
+    preapproved: {},
+    onDemand: "ask",
+    denied: {},
+    expiresAt: "2026-01-01T01:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("task grant", () => {
+  it("asks for anything a grant does not name", () => {
+    const decision = checkGrant(grant(), { kind: "pointer", app: "com.apple.Safari" }, { now });
+    expect(decision).toEqual({
+      outcome: "ask",
+      reason: "Click in com.apple.Safari.",
+    });
+  });
+
+  it("denies everything once the grant expires", () => {
+    const decision = checkGrant(
+      grant({
+        preapproved: { apps: ["com.apple.Safari"] },
+        expiresAt: "2026-01-01T00:00:00.000Z",
+      }),
+      { kind: "pointer", app: "com.apple.Safari" },
+      { now },
+    );
+    expect(decision.outcome).toBe("denied");
+  });
+
+  it("denies a blocked application even when it is also preapproved", () => {
+    const decision = checkGrant(
+      grant({
+        preapproved: { apps: ["com.apple.Safari"] },
+        denied: { apps: ["com.apple.Safari"] },
+      }),
+      { kind: "pointer", app: "com.apple.Safari" },
+      { now },
+    );
+    expect(decision.outcome).toBe("denied");
+  });
+
+  it("never preapproves typing", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { apps: ["com.apple.Safari"] } }),
+      { kind: "type", app: "com.apple.Safari", text: "secret" },
+      { now },
+    );
+    expect(decision.outcome).toBe("ask");
+    expect(decision.outcome === "ask" && decision.reason).toContain("secret");
+  });
+
+  it("asks for a shortcut even in a preapproved application", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { apps: ["com.apple.Safari"] } }),
+      { kind: "key", app: "com.apple.Safari", key: "q", modifiers: ["cmd"] },
+      { now },
+    );
+    expect(decision.outcome).toBe("ask");
+  });
+
+  it("allows a plain key in a preapproved application", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { apps: ["com.apple.Safari"] } }),
+      { kind: "key", app: "com.apple.Safari", key: "Tab" },
+      { now },
+    );
+    expect(decision.outcome).toBe("allowed");
+  });
+
+  it("allows reading a preapproved path and denies a blocked one", () => {
+    const allowed = checkGrant(
+      grant({ preapproved: { readPaths: ["/Users/me/notes"] } }),
+      { kind: "read", path: "/Users/me/notes/today.md" },
+      { now, cwd: "/Users/me" },
+    );
+    const denied = checkGrant(
+      grant({
+        preapproved: { readPaths: ["/Users/me/notes"] },
+        denied: { paths: ["/Users/me/notes/private"] },
+      }),
+      { kind: "read", path: "/Users/me/notes/private/key.txt" },
+      { now, cwd: "/Users/me" },
+    );
+    expect(allowed.outcome).toBe("allowed");
+    expect(denied.outcome).toBe("denied");
+  });
+
+  it("does not let a write path stand in for a read path", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { writePaths: ["/Users/me/notes"] } }),
+      { kind: "read", path: "/Users/me/notes/today.md" },
+      { now, cwd: "/Users/me" },
+    );
+    expect(decision.outcome).toBe("ask");
+  });
+
+  it("allows reading the screen without a grant", () => {
+    expect(
+      checkGrant(emptyTaskGrant("2026-01-01T01:00:00.000Z"), { kind: "observe" }, { now }).outcome,
+    ).toBe("allowed");
+  });
+
+  it("denies instead of asking when the grant says so", () => {
+    const decision = checkGrant(
+      grant({ onDemand: "deny" }),
+      { kind: "write", path: "/tmp/a" },
+      { now },
+    );
+    expect(decision.outcome).toBe("denied");
+  });
+
+  it("asks about a shell command that is not preapproved", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { shell: { allow: false } } }),
+      { kind: "shell", command: "git status" },
+      { now },
+    );
+    expect(decision.outcome).toBe("ask");
+  });
+
+  it("allows a preapproved shell command", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { shell: { allow: true, commands: ["git"] } } }),
+      { kind: "shell", command: "git status" },
+      { now },
+    );
+    expect(decision.outcome).toBe("allowed");
+  });
+
+  it("asks when a preapproved shell command runs a program outside the list", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { shell: { allow: true, commands: ["git"] } } }),
+      { kind: "shell", command: "git status; rm -rf /tmp/x" },
+      { now },
+    );
+    expect(decision.outcome).toBe("ask");
+  });
+
+  it("asks about a shell command that reaches an unlisted host", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { shell: { allow: true } } }),
+      { kind: "shell", command: "curl https://example.com/data" },
+      { now },
+    );
+    expect(decision.outcome).toBe("ask");
+    expect(decision.outcome === "ask" && decision.reason).toContain("example.com");
+  });
+
+  it("allows a shell command that reaches a listed host", () => {
+    const decision = checkGrant(
+      grant({ preapproved: { shell: { allow: true }, hosts: ["example.com"] } }),
+      { kind: "shell", command: "curl https://example.com/data" },
+      { now },
+    );
+    expect(decision.outcome).toBe("allowed");
+  });
+
+  it("denies a shell command that reaches a blocked host", () => {
+    const decision = checkGrant(
+      grant({
+        preapproved: { shell: { allow: true }, hosts: ["example.com"] },
+        denied: { hosts: ["example.com"] },
+      }),
+      { kind: "shell", command: "curl https://example.com/data" },
+      { now },
+    );
+    expect(decision.outcome).toBe("denied");
+  });
+
+  it("blocks a shell command that writes into a blocked path", () => {
+    const decision = checkGrant(
+      grant({
+        preapproved: { shell: { allow: true } },
+        denied: { paths: ["/Users/me/private"] },
+      }),
+      { kind: "shell", command: "cp notes.txt /Users/me/private/notes.txt" },
+      { now, cwd: "/Users/me" },
+    );
+    expect(decision.outcome).toBe("denied");
+  });
+});

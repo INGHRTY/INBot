@@ -325,11 +325,16 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
 
 2. **屏幕捕获与输入注入**（macOS 优先，Windows/Linux 后续）。
    - **截图**：Electron `desktopCapturer.getSources({ types: ["screen"], thumbnailSize })`。macOS 需要「屏幕录制」TCC 授权；用 `systemPreferences.getMediaAccessStatus("screen")` 探测。
-   - **输入注入**：**koffi 调用 CoreGraphics**（`CGEventCreateMouseEvent` / `CGEventCreateKeyboardEvent` / `CGEventPost`）。仓库已有 koffi 依赖和 macOS 调用先例（`file-handle-path.ts` 加载 `libSystem.dylib`）。需要「辅助功能」TCC 授权，用 `AXIsProcessTrustedWithOptions` 探测。
+   - **截图按「点」而不是「像素」**：Retina 屏上 `CGEvent` 的鼠标坐标是逻辑点，截图却是两倍像素。为了让模型看到的坐标就是能点的坐标，缩略图按显示器的逻辑尺寸请求（`thumbnailSize = display.bounds`），图像像素与屏幕坐标一一对应，点击时只需加上显示器原点。
+   - **输入注入**：**koffi 调用 CoreGraphics**（`CGEventCreateMouseEvent` / `CGEventCreateKeyboardEvent` / `CGEventPost`）。仓库已有 koffi 依赖和 macOS 调用先例（`file-handle-path.ts` 加载 `libSystem.dylib`）。需要「辅助功能」TCC 授权，用 `AXIsProcessTrusted` 探测。
      - 不要用 `osascript` + System Events：慢、中文输入法不友好、且要同时申请「辅助功能」和「自动化」两项授权。
-   - **文本输入**：走剪贴板 + `Cmd+V`（`CGEvent` 组合键 + `NSPasteboard`）。比逐键 `CGEvent` 稳，且天然支持中文。
-   - **窗口信息**：`AXUIElement`（需辅助功能权限）拿焦点窗口标题；无权限时降级为 `NSWorkspace.frontmostApplication`（只能拿应用名）。标题必须过 `redactSecrets`。
+   - **移动指针必须用 `CGWarpMouseCursorPosition`**：只 post 一个 mouse-moved 事件**不会**移动指针（实测：事件发出后指针纹丝不动）。正确做法是先 warp，再 post 事件让应用收到 hover。
+   - **文本输入**：走 `CGEventKeyboardSetUnicodeString` 逐字符注入，**不动剪贴板**。原方案写的是剪贴板 + `Cmd+V`，实现时改了：剪贴板方案会覆盖用户自己的剪贴板，在个人电脑上这是看得见的副作用；Unicode 注入同样支持中文。`\n` / `\t` 仍走 Return / Tab 键，因为纯 Unicode 字符不会触发应用的换行处理。
+   - **窗口信息**：用 `CGWindowListCopyWindowInfo`，取**第一个 layer == 0 的窗口**（系统自己的菜单栏 / Dock / 通知中心都在更高的 layer 上，所以这一条规则与系统语言无关）。窗口标题由「屏幕录制」权限决定，没有该权限时标题为空。**不用 `AXUIElement`**：实测 `AXUIElementCopyAttributeValue` 取 `AXFocusedApplication` 会返回 `-25204` / `-25212`，且失败时输出缓冲区里是野指针，接着调用 `AXUIElementGetPid` 会直接 SIGILL 崩溃。
    - **应用启动**：`open -a <name>` / `open <path>`。
+   - **注意**：macOS 27 的系统框架只在 dyld 共享缓存里，磁盘上没有 `Versions/C`，只有 `Versions/A`。所以框架路径一律用**不带版本号**的软链接（`/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics`），写死 `Versions/C` 会在新系统上直接失败。
+
+   **已在本机验证**（macOS 27.2，Electron 45）：截图按请求尺寸返回、坐标空间与 `CGEvent` 一致（Electron 的 `getCursorScreenPoint()` 与 `CGEventGetLocation()` 数值相同）、中文与 ASCII 文本注入成功、`⌘A` 修饰键成功、按钮点击成功。
 
 3. **授权包执行器**（§2.3）。在每个工具调用前检查。
 
@@ -354,17 +359,22 @@ export class LocalDeviceAgentProvider implements CloudAgentProvider {
 #### 2.5.1 文件布局
 
 ```
-packages/adapters/src/local-agent/
-  index.ts              # 对外出口：createLocalAgentRunner
-  tools.ts              # 工具集定义（给 Pi 的 AgentTool[]）
-  loop.ts               # 主循环
-  model.ts              # 模型绑定
-  grant.ts              # 授权包判定（纯逻辑，云端与设备端共用）
-  grant-protocol.ts     # 授权请求/应答的消息类型
+packages/adapters/src/
+  host-screen.ts            # HostScreen 契约：截图 + 输入注入的编排，平台无关
+  local-agent/
+    grant.ts                # 授权包判定（纯逻辑，云端与设备端共用）
+    network-target.ts       # shell 命令的网络目标识别（纯逻辑）
 
-packages/adapters/src/host-screen.ts   # 截图 + 输入注入原语（与 v1 共用）
-packages/adapters/src/macos-native.ts  # koffi → CoreGraphics / Accessibility
+apps/desktop/src/
+  host-screen.ts            # 桌面端 HostScreen 实现（组合下面两个）
+  screen-capture.ts         # Electron desktopCapturer 截图 + 屏幕录制授权探测
+  macos-native.ts           # koffi → CoreGraphics 注入 / 窗口列表 / 授权探测
+  macos-keys.ts             # 虚拟键码与修饰键表（纯逻辑）
 ```
+
+> **为什么原生代码在 `apps/desktop` 而不是 `packages/adapters`**：`packages/adapters` 是服务端包，会被打进 API / worker 镜像；屏幕捕获和输入注入是**平台原生的交互**，按 `AGENTS.md` 的划分（"genuinely native ... interactions platform-specific"）应当留在桌面应用里。`packages/adapters` 只保留**平台无关的契约**（`HostScreen`）和**纯逻辑**（授权包判定、网络目标识别），设备端和将来的本地 agent 共用这两份。
+>
+> `HostScreen` 的边界因此很窄：底层是 `capture / inject / frontmost` 三个原语，平台实现换成 Windows/Linux 时只需换掉 `apps/desktop` 里的那一份。
 
 #### 2.5.2 工具集
 
@@ -899,6 +909,18 @@ M3（扩展性 L1）
 
 **建议排期**：M3-L1（7 人日）→ M1 原语（8 人日）→ M1 主体（35 人日）→ M2（28 人日）。
 M2 的采集端可以与 M1 主体并行开发。
+
+**当前进度**（2026-10-30）：
+
+| 部分 | 状态 | 落点 |
+| --- | --- | --- |
+| 屏幕原语（截图 / 输入注入 / 窗口信息 / TCC 探测） | **已实现并在本机验证** | `apps/desktop/src/{screen-capture,macos-native,macos-keys}.ts` |
+| `HostScreen` 契约（平台无关） | **已实现** | `packages/adapters/src/host-screen.ts` |
+| 授权包判定（两层：预授权 / 逐次确认 / 硬禁止） | **已实现** | `packages/adapters/src/local-agent/grant.ts` |
+| shell 命令的网络目标识别 | **已实现** | `packages/adapters/src/local-agent/network-target.ts` |
+| 设备协议扩展（任务 / 事件消息） | 未开始 | `packages/adapters/src/user-device-protocol.ts` |
+| 本地 Pi loop / 工具集 / 模型绑定 / 凭据 | 未开始 | `packages/adapters/src/local-agent/` |
+| 云端 `LocalDeviceAgentProvider` | 未开始 | `packages/adapters/src/` |
 
 ---
 
