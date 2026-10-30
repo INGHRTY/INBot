@@ -9,6 +9,7 @@ import { getLogger } from "@rakazo/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import type { HostComputerRequest } from "./host-computer-protocol.js";
+import type { LocalAgentTask } from "./local-agent/task-protocol.js";
 import type { UserDeviceSocket } from "./user-device-gateway.js";
 import {
   createUserDeviceToken,
@@ -138,6 +139,23 @@ class FakeSocket extends EventEmitter implements UserDeviceSocket {
   }
   reply(id: string, frame: unknown) {
     this.emit("message", Buffer.from(JSON.stringify({ type: "frame", id, frame })));
+  }
+  /** Device side: the task the server sent. */
+  async nextTask() {
+    while (true) {
+      const task = this.sent.find((message) => message.type === "task" && !message.seen);
+      if (task) {
+        task.seen = true;
+        return task as { id: string; task: LocalAgentTask };
+      }
+      await once(this, "sent");
+    }
+  }
+  taskEvent(id: string, event: unknown) {
+    this.emit("message", Buffer.from(JSON.stringify({ type: "taskEvent", id, event })));
+  }
+  taskApproval(id: string, request: unknown) {
+    this.emit("message", Buffer.from(JSON.stringify({ type: "taskApproval", id, request })));
   }
 }
 
@@ -604,5 +622,116 @@ describe("device socket upgrade", () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+const localTask = {
+  taskId: "task-1",
+  prompt: "Open Safari",
+  botId: "bot-1",
+  grant: {
+    preapproved: {},
+    onDemand: "ask",
+    denied: {},
+    expiresAt: "2030-01-01T00:00:00.000Z",
+  },
+  model: { provider: "openai-compatible", id: "gpt" },
+  budget: { maxSteps: 10, maxSeconds: 300 },
+} satisfies LocalAgentTask;
+
+describe("device tasks", () => {
+  it("runs a task on the device and reports what it says", async () => {
+    const { hub, devices } = setup();
+    const socket = new FakeSocket();
+    await hub.attach(device, socket);
+    const handle = await devices.task("user-1", localTask, new AbortController().signal);
+    const sent = await socket.nextTask();
+    expect(sent.task).toEqual(localTask);
+    const updates = collect(handle.updates(new AbortController().signal));
+    socket.taskEvent(sent.id, { kind: "started", at: "2026-01-01T00:00:00.000Z" });
+    socket.taskEvent(sent.id, {
+      kind: "finished",
+      at: "2026-01-01T00:00:00.000Z",
+      answer: "Safari is open",
+    });
+    await expect(updates).resolves.toEqual([
+      { kind: "event", event: { kind: "started", at: "2026-01-01T00:00:00.000Z" } },
+      {
+        kind: "event",
+        event: { kind: "finished", at: "2026-01-01T00:00:00.000Z", answer: "Safari is open" },
+      },
+    ]);
+  });
+
+  it("answers a permission request the device raised", async () => {
+    const { hub, devices } = setup();
+    const socket = new FakeSocket();
+    await hub.attach(device, socket);
+    const handle = await devices.task("user-1", localTask, new AbortController().signal);
+    const sent = await socket.nextTask();
+    const updates = handle.updates(new AbortController().signal)[Symbol.asyncIterator]();
+    socket.taskApproval(sent.id, {
+      approvalId: "a1",
+      at: "2026-01-01T00:00:00.000Z",
+      action: "type",
+      summary: "Type a password",
+      detail: "hunter2",
+    });
+    const first = await updates.next();
+    expect(first.value).toEqual({
+      kind: "approval",
+      request: {
+        approvalId: "a1",
+        at: "2026-01-01T00:00:00.000Z",
+        action: "type",
+        summary: "Type a password",
+        detail: "hunter2",
+      },
+    });
+    handle.decide({ approvalId: "a1", allowed: true });
+    await vi.waitFor(() =>
+      expect(
+        socket.sent.some(
+          (message) =>
+            message.type === "taskDecision" && (message.decision as { allowed: boolean }).allowed,
+        ),
+      ).toBe(true),
+    );
+    socket.close();
+    await expect(updates.next()).rejects.toThrow("disconnected");
+  });
+
+  it("ignores an answer to a request the device never made", async () => {
+    const { hub, devices } = setup();
+    const socket = new FakeSocket();
+    await hub.attach(device, socket);
+    const handle = await devices.task("user-1", localTask, new AbortController().signal);
+    await socket.nextTask();
+    handle.decide({ approvalId: "unknown", allowed: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(socket.sent.some((message) => message.type === "taskDecision")).toBe(false);
+  });
+
+  it("stops a task when the cloud cancels it", async () => {
+    const { hub, devices } = setup();
+    const socket = new FakeSocket();
+    await hub.attach(device, socket);
+    const handle = await devices.task("user-1", localTask, new AbortController().signal);
+    await socket.nextTask();
+    handle.cancel();
+    await vi.waitFor(() =>
+      expect(socket.sent.some((message) => message.type === "taskCancel")).toBe(true),
+    );
+  });
+
+  it("fails the task when the device disconnects", async () => {
+    const { hub, devices } = setup();
+    const socket = new FakeSocket();
+    await hub.attach(device, socket);
+    const handle = await devices.task("user-1", localTask, new AbortController().signal);
+    await socket.nextTask();
+    const updates = collect(handle.updates(new AbortController().signal));
+    socket.close();
+    await expect(updates).rejects.toThrow("disconnected");
   });
 });

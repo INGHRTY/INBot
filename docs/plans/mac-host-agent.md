@@ -224,15 +224,25 @@ onDemand === "deny"？ → 不执行，回 blocked
 
 ### 2.1 传输层：从「请求-响应」到「任务-结果」
 
-现有设备通道是「云端发一个请求、设备回一堆帧」（`host-computer-protocol.ts`）。任务语义需要另外两种消息：
+现有设备通道是「云端发一个请求、设备回一堆帧」（`host-computer-protocol.ts`）。任务语义需要另外几种消息：
 
 ```ts
-// packages/adapters/src/user-device-protocol.ts（新增）
-// 云端 → 设备：派一个任务
-{ type: "task", id, task: LocalAgentTask }
-// 设备 → 云端：任务进度与最终结果
-{ type: "taskEvent", id, event: TaskEvent }
+// packages/adapters/src/user-device-protocol.ts
+// 云端 → 设备
+{ type: "task", id, task: LocalAgentTask }        // 派一个任务
+{ type: "taskReply", id, text }                   // 追加一条指令
+{ type: "taskCancel", id }                        // 中止任务
+{ type: "taskDecision", id, decision }            // 回答一次逐次确认
+// 设备 → 云端
+{ type: "taskEvent", id, event: TaskEvent }       // 进度与最终结果
+{ type: "taskApproval", id, request }             // 请求用户批准一个动作
 ```
+
+**向后兼容靠「联合类型里没有分支」实现**：消息联合是 `z.discriminatedUnion`，老客户端解析不了 `task` 就整条丢弃；老服务端同样丢弃 `taskEvent`。两个方向的测试都钉住了这一点（`user-device-protocol.test.ts`）。
+
+**幂等**：`task.taskId` 是幂等键。设备端记住跑完的任务的终态事件，重发同一个 `taskId` 时**重放结果**而不是重跑。
+
+**取消不能丢**：任务先登记再 `await`（授权、用户确认都是异步的），所以「取消」在授权还没回来时也能生效。
 
 `LocalAgentTask` 结构：
 
@@ -918,7 +928,7 @@ M2 的采集端可以与 M1 主体并行开发。
 | `HostScreen` 契约（平台无关） | **已实现** | `packages/adapters/src/host-screen.ts` |
 | 授权包判定（两层：预授权 / 逐次确认 / 硬禁止） | **已实现** | `packages/adapters/src/local-agent/grant.ts` |
 | shell 命令的网络目标识别 | **已实现** | `packages/adapters/src/local-agent/network-target.ts` |
-| 设备协议扩展（任务 / 事件消息） | 未开始 | `packages/adapters/src/user-device-protocol.ts` |
+| 设备协议扩展（任务 / 事件消息） | **已实现** | `packages/adapters/src/user-device-protocol.ts`、`local-agent/{task,grant}-protocol.ts` |
 | 本地 Pi loop / 工具集 / 模型绑定 / 凭据 | 未开始 | `packages/adapters/src/local-agent/` |
 | 云端 `LocalDeviceAgentProvider` | 未开始 | `packages/adapters/src/` |
 

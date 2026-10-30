@@ -1,33 +1,44 @@
 import path from "node:path";
 import { parse as parseShellCommand } from "shell-quote";
+import { z } from "zod";
 import { isAllowedDesktopPath } from "../desktop-sandbox-paths.js";
 import { networkTargets } from "./network-target.js";
+
+const names = z.array(z.string().min(1).max(256)).max(64);
+const paths = z.array(z.string().min(1).max(4096)).max(64);
+const hosts = z.array(z.string().min(1).max(253)).max(64);
 
 /**
  * What a task may do on this computer. Every list starts empty, so a grant that names
  * nothing allows nothing. The device enforces it on every action; the cloud only uses it
  * to reject a task before dispatching it.
  */
-export interface TaskGrant {
-  preapproved: {
+export const taskGrantSchema = z.object({
+  preapproved: z.object({
     /** Applications the task may work in, by bundle id or application name. */
-    apps?: string[];
+    apps: names.optional(),
     /** Paths the task may read. */
-    readPaths?: string[];
+    readPaths: paths.optional(),
     /** Paths the task may write. */
-    writePaths?: string[];
+    writePaths: paths.optional(),
     /** Shell commands the task may run. */
-    shell?: { allow: boolean; commands?: string[] };
+    shell: z
+      .object({
+        allow: z.boolean(),
+        commands: z.array(z.string().min(1).max(64)).max(64).optional(),
+      })
+      .optional(),
     /** Hosts the task may reach. */
-    hosts?: string[];
-  };
+    hosts: hosts.optional(),
+  }),
   /** What happens to an action that is neither denied nor preapproved. */
-  onDemand: "ask" | "deny";
+  onDemand: z.enum(["ask", "deny"]),
   /** Actions that never run, whatever else the grant says. */
-  denied: { apps?: string[]; paths?: string[]; hosts?: string[] };
+  denied: z.object({ apps: names.optional(), paths: paths.optional(), hosts: hosts.optional() }),
   /** The grant stops applying at this moment. */
-  expiresAt: string;
-}
+  expiresAt: z.string().min(1).max(64),
+});
+export type TaskGrant = z.infer<typeof taskGrantSchema>;
 
 /** One action, in the terms the grant can judge. */
 export type GrantSubject =

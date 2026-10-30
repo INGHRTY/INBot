@@ -2606,6 +2606,9 @@ describe("user_computer_shell", () => {
     const gateway = {
       connected: vi.fn(async (_userId: string) => (connected ? device : null)),
       hasDevice: vi.fn(async (_userId: string) => paired),
+      task: vi.fn(async () => {
+        throw new Error("Tasks are not used here");
+      }),
       async *request<T>(userId: string, request: HostComputerRequest) {
         requests.push({ userId, request });
         if (request.method === "environment") {
