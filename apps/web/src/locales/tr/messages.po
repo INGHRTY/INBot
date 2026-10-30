@@ -678,6 +678,7 @@ msgid "Allow for this chat"
 msgstr ""
 
 #: src/components/AskCard.tsx
+#: src/components/CloudAgentCard.tsx
 msgid "Allow once"
 msgstr "Bir kez izin ver"
 
@@ -2494,6 +2495,7 @@ msgid "Denied"
 msgstr "Reddedildi"
 
 #: src/components/AskCard.tsx
+#: src/components/CloudAgentCard.tsx
 msgid "Deny"
 msgstr "Reddet"
 

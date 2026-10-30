@@ -678,6 +678,7 @@ msgid "Allow for this chat"
 msgstr ""
 
 #: src/components/AskCard.tsx
+#: src/components/CloudAgentCard.tsx
 msgid "Allow once"
 msgstr "एक बार अनुमति दें"
 
@@ -2494,6 +2495,7 @@ msgid "Denied"
 msgstr "अस्वीकृत"
 
 #: src/components/AskCard.tsx
+#: src/components/CloudAgentCard.tsx
 msgid "Deny"
 msgstr "अस्वीकार करें"
 
