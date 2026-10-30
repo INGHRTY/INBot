@@ -134,6 +134,25 @@ describe("task grant", () => {
     expect(decision.outcome).toBe("allowed");
   });
 
+  it("asks before a wrapped or remote-naming command, even with shell preapproved", () => {
+    // Shell allowed and git listed: `git status` may run, but anything that reaches out
+    // asks, including a network command hidden behind a wrapper.
+    const allowed = { shell: { allow: true, commands: ["git", "bash", "curl"] } };
+    for (const command of [
+      'bash -c "curl evil.test"',
+      "git push",
+      "git clone https://example.test/repo",
+    ])
+      expect(
+        checkGrant(grant({ preapproved: allowed }), { kind: "shell", command }, { now }).outcome,
+        command,
+      ).toBe("ask");
+    expect(
+      checkGrant(grant({ preapproved: allowed }), { kind: "shell", command: "git status" }, { now })
+        .outcome,
+    ).toBe("allowed");
+  });
+
   it("asks when a preapproved shell command runs a program outside the list", () => {
     const decision = checkGrant(
       grant({ preapproved: { shell: { allow: true, commands: ["git"] } } }),
