@@ -9,6 +9,12 @@ import {
   hostComputerDeadlineMs,
   hostComputerRequest,
 } from "./host-computer-protocol.js";
+import type { TaskStatus } from "./local-agent/task-protocol.js";
+
+/** What this computer knows about the tasks it was given. */
+export interface TaskStatusReader {
+  status(taskId: string): TaskStatus | undefined;
+}
 
 /** Where one request's frames go. A write may wait for the transport to drain. */
 export interface HostComputerSink {
@@ -31,8 +37,11 @@ export interface HostComputerCall {
 /**
  * Runs host computer requests from any transport: the local HTTP listener and the outbound
  * device socket share validation, limits, cancellation, and error sanitizing.
+ *
+ * A runner may also be given the tasks this computer runs, so a request can ask how one
+ * of them ended.
  */
-export function createHostComputerRunner(options: { root: string }) {
+export function createHostComputerRunner(options: { root: string; tasks?: TaskStatusReader }) {
   let enabled = false;
   const active = new Map<
     AbortController,
@@ -112,6 +121,9 @@ export function createHostComputerRunner(options: { root: string }) {
           content: Buffer.from(input.file.content, "base64"),
         });
         yield null;
+        break;
+      case "taskStatus":
+        yield options.tasks?.status(input.taskId) ?? { taskId: input.taskId, state: "unknown" };
         break;
       case "exportWorkspace":
         for await (const file of provider.exportWorkspace(computer)) {

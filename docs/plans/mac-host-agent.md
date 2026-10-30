@@ -940,9 +940,14 @@ M2 的采集端可以与 M1 主体并行开发。
 | 模型绑定 | **已实现** | `packages/adapters/src/local-agent/model.ts` |
 | 凭据存取（Keychain，云端只见 `connectionRef`） | **已实现** | `apps/desktop/src/device-model-credentials.ts` |
 | 桌面端接线 | **已实现** | `apps/desktop/src/local-task-runner.ts`、`main.ts` |
-| 云端 `LocalDeviceAgentProvider` | 未开始 | `packages/adapters/src/` |
+| 云端 `LocalDeviceAgentProvider` | **已实现**（未接线，见下） | `packages/adapters/src/local-device-cloud-agent.ts` |
+| 任务结果落库（`CloudAgent.result` 可空列） | **已实现** | `schema.prisma` + 迁移 `20261106120000_cloud_agent_result` |
+| 设备端回答任务状态（`taskStatus`） | **已实现** | `host-computer-protocol.ts`、`user-device-client.ts` |
+| **云端接线（composition root）** | 未开始，**卡在审批卡** | `apps/api`、`apps/worker` |
 | 逐次确认的审批卡 UI | 未开始（协议已通，界面未做） | `apps/web` |
 | 菜单栏常驻状态 + 一键中断 | 未开始 | `apps/desktop` |
+
+> **为什么 provider 实现了却还没接线**：设备端的授权包默认 `preapproved` 为空、`onDemand: "ask"`，也就是**每个动作都要问**。云端目前没有把设备的逐次确认请求送到用户面前的通道（审批卡 UI 未做），接上线只会让任务在第一个动作上停住直到超时。所以 provider 先做到「可构造、有测试、协议与存储就位」，等审批卡通道做完再接 composition root；届时 `cloudAgent` 依赖从「一个连接」改成按 (spaceId, userId) 解析（§2.2 第 1 点）。
 
 ---
 

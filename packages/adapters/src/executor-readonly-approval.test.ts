@@ -2609,6 +2609,7 @@ describe("user_computer_shell", () => {
       task: vi.fn(async () => {
         throw new Error("Tasks are not used here");
       }),
+      taskCommand: vi.fn(async () => false),
       async *request<T>(userId: string, request: HostComputerRequest) {
         requests.push({ userId, request });
         if (request.method === "environment") {

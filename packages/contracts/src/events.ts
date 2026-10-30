@@ -241,6 +241,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     branch: z.string().optional(),
     prUrl: z.string().optional(),
     latestRunId: z.string().optional(),
+    /** What the agent answered, when it answers in text rather than with a pull request. */
+    result: z.string().optional(),
   }),
   z.object({
     kind: z.literal("skill_draft"),

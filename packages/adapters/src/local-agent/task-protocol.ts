@@ -80,3 +80,22 @@ export type TaskEvent = z.infer<typeof taskEventSchema>;
 export function isTerminalTaskEvent(event: TaskEvent): boolean {
   return event.kind === "finished" || event.kind === "failed";
 }
+
+/**
+ * What a computer says about a task it was given.
+ *
+ * The cloud polls a task from another process than the one holding the socket, so it
+ * cannot read the live session. It asks the computer instead, which remembers how the
+ * task ended.
+ */
+export const taskStatusSchema = z.object({
+  taskId: z.string().min(1).max(128),
+  state: z.enum(["running", "finished", "failed", "unknown"]),
+  /** The answer of a finished task. */
+  answer: z.string().max(20_000).optional(),
+  /** Why a failed task failed. */
+  error: z.string().max(2000).optional(),
+  /** The last few things the task did, as the computer already reported them. */
+  steps: z.number().int().nonnegative().max(200).optional(),
+});
+export type TaskStatus = z.infer<typeof taskStatusSchema>;

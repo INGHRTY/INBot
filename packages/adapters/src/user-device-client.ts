@@ -8,7 +8,7 @@ import type {
   ActionApprovalDecision,
   ActionApprovalRequest,
 } from "./local-agent/grant-protocol.js";
-import type { LocalAgentTask, TaskEvent } from "./local-agent/task-protocol.js";
+import type { LocalAgentTask, TaskEvent, TaskStatus } from "./local-agent/task-protocol.js";
 import { isTerminalTaskEvent } from "./local-agent/task-protocol.js";
 import type { UserDeviceClientMessage } from "./user-device-protocol.js";
 import { userDeviceServerMessage } from "./user-device-protocol.js";
@@ -42,6 +42,11 @@ export interface UserDeviceTaskRunner {
   run(task: LocalAgentTask, control: UserDeviceTaskControl): Promise<UserDeviceTaskResult>;
 }
 
+/** What this computer knows about the tasks it was given, so a request can ask. */
+export interface UserDeviceTaskReader {
+  status(taskId: string): TaskStatus | undefined;
+}
+
 export interface UserDeviceClientOptions {
   serverUrl: string;
   token: string;
@@ -68,6 +73,8 @@ interface RunningTask {
     { approvalId: string; resolve: (decision: ActionApprovalDecision) => void }
   >;
   finished: boolean;
+  /** How many actions the task has reported. */
+  steps: number;
 }
 
 /**
@@ -77,7 +84,15 @@ interface RunningTask {
  */
 export function startUserDeviceClient(options: UserDeviceClientOptions) {
   const retry = options.retryMs ?? { min: 1_000, max: 60_000 };
-  const runner = createHostComputerRunner({ root: options.root });
+  /** Every task this computer ran, so a status request can answer for one. */
+  const taskStatuses = new Map<string, TaskStatus>();
+  const taskReader: UserDeviceTaskReader = {
+    status(taskId) {
+      const known = taskStatuses.get(taskId);
+      return known ? { ...known } : undefined;
+    },
+  };
+  const runner = createHostComputerRunner({ root: options.root, tasks: taskReader });
   runner.setEnabled(true);
   const url = new URL(USER_DEVICE_CONNECT_PATH, options.serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -131,7 +146,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       { call: HostComputerCall; cancelled: boolean; settled: boolean }
     >();
     const authorizing = new Set<string>();
-    const tasks = new Map<string, RunningTask>();
+    const runningTasks = new Map<string, RunningTask>();
     /** The result of a task that already ran, so a repeat does not run it again. */
     const completed = new Map<string, TaskEvent>();
     let alive = true;
@@ -173,8 +188,8 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       for (const { call } of calls.values()) call.abort();
       calls.clear();
       // A task that loses its connection cannot report anything, so it stops here.
-      for (const task of tasks.values()) task.controller.abort();
-      tasks.clear();
+      for (const task of runningTasks.values()) task.controller.abort();
+      runningTasks.clear();
       if (socket === ws) {
         socket = undefined;
         refuseWaiting = undefined;
@@ -202,16 +217,16 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         return;
       }
       if (message.type === "taskReply") {
-        const task = tasks.get(message.id);
+        const task = runningTasks.get(message.id);
         if (task) deliverInstruction(task, message.text);
         return;
       }
       if (message.type === "taskCancel") {
-        tasks.get(message.id)?.controller.abort();
+        runningTasks.get(message.id)?.controller.abort();
         return;
       }
       if (message.type === "taskDecision") {
-        tasks
+        runningTasks
           .get(message.id)
           ?.approvals.get(message.decision.approvalId)
           ?.resolve(message.decision);
@@ -314,14 +329,19 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         waiting: [],
         approvals: new Map(),
         finished: false,
+        steps: 0,
       };
-      tasks.set(id, running);
+      runningTasks.set(id, running);
+      taskStatuses.set(task.taskId, { taskId: task.taskId, state: "running" });
       const control: UserDeviceTaskControl = {
         signal: running.controller.signal,
         event(event) {
           if (isTerminalTaskEvent(event)) {
             running.finished = true;
             completed.set(task.taskId, event);
+            taskStatuses.set(task.taskId, statusFrom(task.taskId, event, running.steps));
+          } else if (event.kind === "step") {
+            running.steps += 1;
           }
           void sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
         },
@@ -377,6 +397,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         if (!running.finished) {
           running.finished = true;
           completed.set(task.taskId, event);
+          taskStatuses.set(task.taskId, statusFrom(task.taskId, event, running.steps));
           await sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
         }
       } catch (error) {
@@ -388,6 +409,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         if (!running.finished) {
           running.finished = true;
           completed.set(task.taskId, event);
+          taskStatuses.set(task.taskId, statusFrom(task.taskId, event, running.steps));
           await sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
         }
       } finally {
@@ -397,13 +419,34 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
           pending.resolve({ approvalId: pending.approvalId, allowed: false });
         }
         running.approvals.clear();
-        if (tasks.get(id) === running) tasks.delete(id);
+        if (runningTasks.get(id) === running) runningTasks.delete(id);
       }
     }
   }
 
   connect();
   return { close: stop, cancelAll };
+}
+
+/**
+ * What a finished task looks like to a status request.
+ *
+ * The answer travels through the event the cloud already got; a status request from
+ * another process has to be told the same thing again.
+ */
+function statusFrom(taskId: string, event: TaskEvent, steps: number): TaskStatus {
+  if (event.kind === "finished") {
+    return {
+      taskId,
+      state: "finished",
+      answer: event.answer,
+      ...(steps ? { steps } : {}),
+    };
+  }
+  if (event.kind === "failed") {
+    return { taskId, state: "failed", error: event.error, ...(steps ? { steps } : {}) };
+  }
+  return { taskId, state: "running", ...(steps ? { steps } : {}) };
 }
 
 /** Hands an instruction to a task, or to whoever is waiting for one. */

@@ -22,6 +22,7 @@ function setup(execute: (signal: AbortSignal) => AsyncIterable<unknown>, secrets
     task: async () => {
       throw new Error("Tasks are not used here");
     },
+    taskCommand: async () => false,
     async *request<T>(
       _userId: string,
       request: HostComputerRequest,

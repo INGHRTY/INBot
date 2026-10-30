@@ -25,10 +25,15 @@ import { isTerminalTaskEvent, localAgentTaskSchema } from "./local-agent/task-pr
 import type {
   UserDevice,
   UserDeviceGateway,
+  UserDeviceTaskCommand,
   UserDeviceTaskHandle,
   UserDeviceTaskUpdate,
 } from "./user-device-protocol.js";
-import { userDeviceClientMessage, userDeviceTaskUpdateSchema } from "./user-device-protocol.js";
+import {
+  userDeviceClientMessage,
+  userDeviceTaskCommandSchema,
+  userDeviceTaskUpdateSchema,
+} from "./user-device-protocol.js";
 
 /** Internal API endpoints other processes forward to. Not under /api, so the public proxy never routes them. */
 export const USER_DEVICE_FORWARD_PATH = "/internal/user-devices/request";
@@ -601,6 +606,21 @@ export class UserDevices implements UserDeviceGateway {
    * works from any API or worker process: when the socket lives elsewhere the task is
    * forwarded to the process that holds it.
    */
+  async taskCommand(
+    userId: string,
+    taskId: string,
+    command: UserDeviceTaskCommand,
+    deviceId?: string,
+  ): Promise<boolean> {
+    const route = await this.route(userId, deviceId);
+    if (!route) return false;
+    const target = { deviceId: route.deviceId, userId, connectionId: route.connectionId };
+    if (this.deps.hub?.holds(target)) {
+      return this.deps.hub.taskCommand(target, taskId, command);
+    }
+    return this.forwardCommand(route.address, target, taskId, command);
+  }
+
   async task(
     userId: string,
     task: LocalAgentTask,
@@ -685,18 +705,33 @@ export class UserDevices implements UserDeviceGateway {
     id: string,
     command: UserDeviceTaskCommand,
   ): Promise<void> {
-    await this.fetch(new URL(USER_DEVICE_TASK_COMMAND_PATH, address), {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.deps.forwardSecret}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ ...target, id, command }),
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    })
-      .then((response) => response.body?.cancel())
-      .catch((error) => getLogger().warn("user device task command forward failed", { error }));
+    await this.forwardCommand(address, target, id, command);
+  }
+
+  /** Sends a command to another process and reports whether it found the task. */
+  private async forwardCommand(
+    address: string,
+    target: UserDeviceRoute,
+    id: string,
+    command: UserDeviceTaskCommand,
+  ): Promise<boolean> {
+    try {
+      const response = await this.fetch(new URL(USER_DEVICE_TASK_COMMAND_PATH, address), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.deps.forwardSecret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ...target, id, command }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      await response.body?.cancel();
+      return response.ok;
+    } catch (error) {
+      getLogger().warn("user device task command forward failed", { error });
+      return false;
+    }
   }
 
   private async route(userId: string, deviceId?: string) {
@@ -758,14 +793,6 @@ export const userDeviceForwardBody = z.object({
   connectionId: z.string().min(1).max(64),
   request: hostComputerRequest,
 });
-
-/** What the cloud can tell a running task. */
-export const userDeviceTaskCommandSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("decision"), decision: actionApprovalDecisionSchema }),
-  z.object({ type: z.literal("reply"), text: z.string().min(1).max(20_000) }),
-  z.object({ type: z.literal("cancel") }),
-]);
-export type UserDeviceTaskCommand = z.infer<typeof userDeviceTaskCommandSchema>;
 
 /** Body of a task another process asks this one to run on its device. */
 export const userDeviceTaskBody = z.object({

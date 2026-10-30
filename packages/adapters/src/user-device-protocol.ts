@@ -12,6 +12,14 @@ import {
 import type { LocalAgentTask, TaskEvent } from "./local-agent/task-protocol.js";
 import { localAgentTaskSchema, taskEventSchema } from "./local-agent/task-protocol.js";
 
+/** What the cloud can tell a running task. */
+export const userDeviceTaskCommandSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("decision"), decision: actionApprovalDecisionSchema }),
+  z.object({ type: z.literal("reply"), text: z.string().min(1).max(20_000) }),
+  z.object({ type: z.literal("cancel") }),
+]);
+export type UserDeviceTaskCommand = z.infer<typeof userDeviceTaskCommandSchema>;
+
 /**
  * The messages between the cloud and a computer.
  *
@@ -108,6 +116,16 @@ export interface UserDeviceGateway {
     signal: AbortSignal,
     deviceId?: string,
   ): AsyncIterable<T>;
+  /**
+   * Tells a running task something: an instruction, a stop, or the answer to a
+   * permission request. Resolves false when the task is no longer there.
+   */
+  taskCommand(
+    userId: string,
+    taskId: string,
+    command: UserDeviceTaskCommand,
+    deviceId?: string,
+  ): Promise<boolean>;
   /**
    * Starts a task on the user's computer. Throws when the device is offline or revoked.
    */

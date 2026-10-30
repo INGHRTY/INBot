@@ -948,6 +948,8 @@ model CloudAgent {
   url                 String   @default("")
   branch              String?
   prUrl               String?
+  /** What a device task answered. A remote coding agent's answer is its pull request. */
+  result              String?
   launchRequest       Json
   launchDispatched    Boolean  @default(false)
   followup            Json?

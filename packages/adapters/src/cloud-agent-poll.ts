@@ -243,6 +243,8 @@ function snapshotData(snapshot: CloudAgentSnapshot): Prisma.CloudAgentUpdateMany
     branch: snapshot.branch,
     prUrl: snapshot.prUrl ? (cloudAgentHttpsUrl(snapshot.prUrl) ?? "") : undefined,
     latestRunId: snapshot.latestRunId,
+    // The answer of a device task, which has no pull request to point at instead.
+    result: snapshot.result,
   };
 }
 

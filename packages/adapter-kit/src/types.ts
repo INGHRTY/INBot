@@ -1158,6 +1158,12 @@ export interface CloudAgentSnapshot {
   branch?: string;
   prUrl?: string;
   latestRunId?: string;
+  /**
+   * What the agent answered. A remote coding agent's answer is its pull request; an
+   * agent running on the person's own computer answers with text, and nothing else
+   * carries it.
+   */
+  result?: string;
 }
 
 export interface CloudAgentReplyRequest {

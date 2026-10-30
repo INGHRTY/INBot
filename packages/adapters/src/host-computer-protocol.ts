@@ -57,6 +57,16 @@ export const hostComputerRequest = z.discriminatedUnion("method", [
     maxBytes: z.number().int().positive().max(HOST_COMPUTER_MAX_FILE_BYTES).optional(),
   }),
   z.object({ ...base, method: z.literal("writeFile"), file }),
+  /**
+   * What this computer knows about a task it was given. The cloud polls from a process
+   * that does not hold the task session, so it asks the computer, which remembers how
+   * each task ended.
+   */
+  z.object({
+    ...base,
+    method: z.literal("taskStatus"),
+    taskId: z.string().min(1).max(128),
+  }),
 ]);
 export type HostComputerRequest = z.infer<typeof hostComputerRequest>;
 export interface HostComputerEnvironment {

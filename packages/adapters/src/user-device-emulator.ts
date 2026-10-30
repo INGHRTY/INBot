@@ -24,6 +24,11 @@ export class UserDeviceEmulator implements UserDeviceGateway {
     return true;
   }
 
+  /** The emulator answers commands only, so there is never a task to tell anything. */
+  async taskCommand(): Promise<boolean> {
+    return false;
+  }
+
   /** The emulator answers commands only; a task would need a real computer to run on. */
   async task(
     _userId: string,
