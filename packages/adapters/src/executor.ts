@@ -1728,6 +1728,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const retryDelay = providerOutage
           ? providerOutageRetryDelay(priorFailures)
           : computerRetryDelay(fence);
+        // One timestamp for both, so the run and its job resume at the same instant. Two
+        // Date.now() calls can land in different milliseconds and leave them a tick apart.
+        const retryAt = new Date(Date.now() + retryDelay);
         const released = await writeComputerRunRequeue(
           deps,
           runId,
@@ -1736,7 +1739,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           resumeCheckpoint,
           heldForTakeover,
           retryForever ? null : "Run setup failed; retrying",
-          new Date(Date.now() + retryDelay),
+          retryAt,
         );
         if (released) {
           await deps.prisma.attempt.update({
@@ -1748,10 +1751,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             },
           });
           if (retryForever || dispatchHandedOff) {
-            await deps.jobs.enqueue({
-              ...runContinueJob(runId),
-              availableAt: new Date(Date.now() + retryDelay),
-            });
+            await deps.jobs.enqueue({ ...runContinueJob(runId), availableAt: retryAt });
             return;
           }
           throw new Error("Run setup failed; retrying", { cause: reportedSetupError });
