@@ -1,3 +1,6 @@
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { ComputerAction } from "@rakazo/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
 import { type HostFrame, HostScreen } from "../host-screen.js";
@@ -123,6 +126,22 @@ describe("local agent tools", () => {
     expect(injected).toHaveLength(1);
   });
 
+  it("judges each action in the application the batch has switched to", async () => {
+    // A click after a focus lands in the app that was brought forward, not the one in
+    // front when the batch started, so that app decides whether it needs approval.
+    const { deps: options, approve } = deps({
+      grant: grant({ preapproved: { apps: ["Safari"] } }),
+    });
+    await tool("computer_act", localAgentTools(options)).execute("t", {
+      actions: [
+        { kind: "focus", application: "Terminal" },
+        { kind: "click", x: 10, y: 20 },
+      ],
+    });
+    // Focus on Terminal asks, and the click that lands there asks as well.
+    expect(approve).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the text that would be typed", async () => {
     const { deps: options, approve } = deps({
       grant: grant({ preapproved: { apps: ["Safari"] } }),
@@ -244,6 +263,28 @@ describe("local agent tools", () => {
     // The host is not preapproved, so it is put to the person instead of running quietly.
     expect(asked).toHaveLength(1);
     expect(options.approve).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a link inside the workspace that points outside it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rakazo-workspace-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "rakazo-outside-"));
+    try {
+      await writeFile(path.join(outside, "secret.txt"), "not for the task");
+      await symlink(path.join(outside, "secret.txt"), path.join(root, "looks-local.txt"));
+      const { deps: options } = deps({ home: root });
+      const read = await tool("read_file", localAgentTools(options)).execute("t", {
+        path: "looks-local.txt",
+      });
+      expect(read.isError).toBe(true);
+      const written = await tool("write_file", localAgentTools(options)).execute("t", {
+        path: "looks-local.txt",
+        content: "overwritten",
+      });
+      expect(written.isError).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("refuses a path outside the task's workspace", async () => {

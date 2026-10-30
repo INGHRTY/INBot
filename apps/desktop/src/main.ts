@@ -1442,6 +1442,11 @@ app.whenReady().then(async () => {
     );
     return deviceModels.list();
   });
+  ipcMain.handle("desktop.device.models.default", async (event, id: unknown) => {
+    if (!fromMainWindow(event)) throw new Error("Models can only be changed from the app window");
+    if (typeof id === "string") await deviceModels.setDefault(id);
+    return deviceModels.list();
+  });
   ipcMain.handle("desktop.device.models.remove", async (event, id: unknown) => {
     if (!fromMainWindow(event)) throw new Error("Models can only be changed from the app window");
     if (typeof id === "string") await deviceModels.remove(id);

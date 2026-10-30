@@ -1,5 +1,6 @@
 import type { HostScreen } from "../host-screen.js";
 import type { UserDeviceTaskControl, UserDeviceTaskRunner } from "../user-device-client.js";
+import { enforceTaskGrant } from "./grant.js";
 import { runLocalAgent } from "./loop.js";
 import type { DeviceModelConnection } from "./model.js";
 import { bindDeviceModel } from "./model.js";
@@ -34,11 +35,14 @@ export function createLocalAgentRunner(deps: LocalAgentRunnerDeps): UserDeviceTa
       if (!reference) throw new Error("This computer has no model connection to run the task");
       const connection = await deps.connection(reference);
       const model = bindDeviceModel(connection);
+      // The grant the cloud sent is narrowed to what this computer allows on its own,
+      // so a dispatcher cannot widen it by sending a looser one.
+      const grant = enforceTaskGrant(task.grant);
       const deniedPatterns = new Set<string>();
       const tools = localAgentTools({
         screen: deps.screen,
         home: deps.home,
-        grant: task.grant,
+        grant,
         approve: (request) => control.approve(request),
         runShell: deps.runShell,
         frontmostApp: async () => (await deps.screen.frontmost())?.title,
@@ -59,6 +63,12 @@ export function createLocalAgentRunner(deps: LocalAgentRunnerDeps): UserDeviceTa
   };
 }
 
+export {
+  enforceTaskGrant,
+  TASK_GRANT_MAX_HOURS,
+  type TaskGrant,
+  taskGrantCeiling,
+} from "./grant.js";
 export { type LocalAgentResult, type LocalAgentRun, runLocalAgent } from "./loop.js";
 export { bindDeviceModel, type DeviceModelConnection } from "./model.js";
 export { runTaskShell } from "./shell.js";

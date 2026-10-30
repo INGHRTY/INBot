@@ -17,6 +17,8 @@ export interface StoredModelConnection {
   baseUrl?: string;
   /** Whether the model reads images. */
   acceptsImages: boolean;
+  /** The connection a task runs with when the cloud names none. Exactly one has it. */
+  isDefault: boolean;
   reasoning?: boolean;
 }
 
@@ -48,9 +50,17 @@ export class DeviceModelStore {
   }
 
   /** Adds or replaces a connection. The key is optional for a local model server. */
-  async save(connection: Omit<StoredModelConnection, "id"> & { id?: string }, apiKey?: string) {
+  async save(
+    connection: Omit<StoredModelConnection, "id" | "isDefault"> & {
+      id?: string;
+      isDefault?: boolean;
+    },
+    apiKey?: string,
+  ) {
     const entries = await this.entries();
     const id = connection.id ?? randomUUID();
+    // The first connection is the one tasks use, so adding it is enough to run one.
+    const isDefault = connection.isDefault || !entries.some((entry) => entry.isDefault);
     const entry: StoredEntry = {
       id,
       label: connection.label,
@@ -58,6 +68,7 @@ export class DeviceModelStore {
       modelId: connection.modelId,
       ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
       acceptsImages: connection.acceptsImages,
+      isDefault,
       ...(connection.reasoning ? { reasoning: true } : {}),
     };
     if (apiKey) {
@@ -67,24 +78,32 @@ export class DeviceModelStore {
       entry.apiKey = (await this.cipher.encrypt(apiKey)).toString("base64");
     }
     const next = [...entries.filter((candidate) => candidate.id !== id), entry];
+    if (isDefault) for (const other of next) if (other.id !== id) other.isDefault = false;
     await this.write(next);
     return id;
   }
 
-  async remove(id: string): Promise<void> {
+  /** Makes one connection the one tasks use, and no other. */
+  async setDefault(id: string): Promise<void> {
     const entries = await this.entries();
-    await this.write(entries.filter((entry) => entry.id !== id));
+    if (!entries.some((entry) => entry.id === id))
+      throw new Error("That model connection is not on this computer");
+    await this.write(entries.map((entry) => ({ ...entry, isDefault: entry.id === id })));
   }
 
-  /**
-   * The connection a task uses when the cloud does not name one.
-   *
-   * A person who set up a single connection means that one. With several, the cloud must
-   * say which, so this refuses rather than picking one they did not choose.
-   */
+  async remove(id: string): Promise<void> {
+    const entries = (await this.entries()).filter((entry) => entry.id !== id);
+    // Removing the connection tasks used leaves the remaining one in its place.
+    const next = entries.some((entry) => entry.isDefault)
+      ? entries
+      : entries.map((entry, index) => ({ ...entry, isDefault: index === 0 }));
+    await this.write(next);
+  }
+
+  /** The connection a task uses when the cloud does not name one. */
   async defaultConnection(): Promise<string | undefined> {
     const entries = await this.entries();
-    return entries.length === 1 ? entries[0]!.id : undefined;
+    return (entries.find((entry) => entry.isDefault) ?? entries[0])?.id;
   }
 
   /** The connection and its key, ready for the agent to use. */
@@ -110,13 +129,15 @@ export class DeviceModelStore {
     try {
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return [];
-      return parsed.filter(
-        (entry): entry is StoredEntry =>
-          Boolean(entry) &&
-          typeof entry === "object" &&
-          typeof (entry as StoredEntry).id === "string" &&
-          typeof (entry as StoredEntry).modelId === "string",
-      );
+      return parsed
+        .filter(
+          (entry): entry is StoredEntry =>
+            Boolean(entry) &&
+            typeof entry === "object" &&
+            typeof (entry as StoredEntry).id === "string" &&
+            typeof (entry as StoredEntry).modelId === "string",
+        )
+        .map((entry) => ({ ...entry, isDefault: entry.isDefault === true }));
     } catch {
       return [];
     }

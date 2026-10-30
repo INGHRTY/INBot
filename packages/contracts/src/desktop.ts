@@ -58,6 +58,8 @@ export interface RakazoDesktopModelConnection {
   baseUrl?: string;
   /** Whether the model reads screenshots, which a task on this computer needs. */
   acceptsImages: boolean;
+  /** The connection tasks run with. Exactly one is marked. */
+  isDefault: boolean;
 }
 
 /** What a person enters to add a model connection. */
@@ -104,6 +106,8 @@ export interface RakazoDesktop {
       list: () => Promise<RakazoDesktopModelConnection[]>;
       /** Adds or replaces one connection and returns the list. */
       save: (input: RakazoDesktopModelInput) => Promise<RakazoDesktopModelConnection[]>;
+      /** Makes one connection the one tasks run with. */
+      setDefault: (id: string) => Promise<RakazoDesktopModelConnection[]>;
       remove: (id: string) => Promise<RakazoDesktopModelConnection[]>;
     };
   };

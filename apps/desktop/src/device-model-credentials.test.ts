@@ -74,7 +74,7 @@ describe("device model store", () => {
     expect(resolved.baseUrl).toBe("http://127.0.0.1:11434/v1");
   });
 
-  it("uses the only connection as the default, and refuses to pick among several", async () => {
+  it("makes the first connection the default and keeps it until the person changes it", async () => {
     await expect(store.defaultConnection()).resolves.toBeUndefined();
     const only = await store.save({
       label: "My model",
@@ -83,14 +83,20 @@ describe("device model store", () => {
       acceptsImages: false,
     });
     await expect(store.defaultConnection()).resolves.toBe(only);
-    await store.save({
+    const work = await store.save({
       label: "Work model",
       provider: "openai-compatible",
       modelId: "gpt-4.1",
       acceptsImages: false,
     });
-    // Two connections means the person must choose, not that one is guessed.
-    await expect(store.defaultConnection()).resolves.toBeUndefined();
+    // Adding a second model does not silently change what tasks already run with.
+    await expect(store.defaultConnection()).resolves.toBe(only);
+    await store.setDefault(work);
+    await expect(store.defaultConnection()).resolves.toBe(work);
+    expect((await store.list()).map((entry) => entry.isDefault)).toEqual([false, true]);
+    await store.remove(work);
+    // Removing the one in use leaves the remaining one in its place.
+    await expect(store.defaultConnection()).resolves.toBe(only);
   });
 
   it("removes a connection", async () => {

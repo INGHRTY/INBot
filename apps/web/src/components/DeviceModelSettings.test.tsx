@@ -71,6 +71,7 @@ const stored: RakazoDesktopModelConnection = {
   provider: "openai",
   modelId: "gpt-5",
   acceptsImages: true,
+  isDefault: true,
 };
 
 function desktopWith(models: NonNullable<NonNullable<RakazoDesktop["device"]>["models"]>) {
@@ -110,11 +111,14 @@ it("lists the models on this Mac and removes one", async () => {
   const models = desktopWith({
     list: vi.fn().mockResolvedValue([stored]),
     save: vi.fn(),
+    setDefault: vi.fn(),
     remove: vi.fn().mockResolvedValue([]),
   });
   await act(async () => root.render(<DeviceModelSettings />));
   expect(host.textContent).toContain("This Mac's model");
   expect(host.textContent).toContain("openai gpt-5");
+  const choice = host.querySelector<HTMLInputElement>('[aria-label="Use openai gpt-5 for tasks"]');
+  expect(choice?.checked).toBe(true);
 
   await act(async () =>
     host.querySelector<HTMLButtonElement>('[aria-label="Remove openai gpt-5"]')?.click(),
@@ -127,6 +131,7 @@ it("adds a model with the key the person typed and closes", async () => {
   const models = desktopWith({
     list: vi.fn().mockResolvedValue([]),
     save: vi.fn().mockResolvedValue([stored]),
+    setDefault: vi.fn(),
     remove: vi.fn(),
   });
   await act(async () => root.render(<DeviceModelSettings />));
@@ -147,6 +152,7 @@ it("says so and keeps the dialog open when the Mac cannot use the model", async 
   desktopWith({
     list: vi.fn().mockResolvedValue([]),
     save: vi.fn().mockRejectedValue(new Error("unknown model")),
+    setDefault: vi.fn(),
     remove: vi.fn(),
   });
   await act(async () => root.render(<DeviceModelSettings />));

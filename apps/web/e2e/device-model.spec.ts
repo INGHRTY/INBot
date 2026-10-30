@@ -9,6 +9,7 @@ test("a model for this Mac is added and removed in settings", async ({ page }, t
       provider: string;
       modelId: string;
       acceptsImages: boolean;
+      isDefault: boolean;
     }[] = [];
     Object.defineProperty(window, "rakazoDesktop", {
       value: {
@@ -32,7 +33,12 @@ test("a model for this Mac is added and removed in settings", async ({ page }, t
                 provider: input.provider,
                 modelId: input.modelId,
                 acceptsImages: input.acceptsImages,
+                isDefault: !store.some((connection) => connection.isDefault),
               });
+              return store.slice();
+            },
+            setDefault: async (id: string) => {
+              for (const connection of store) connection.isDefault = connection.id === id;
               return store.slice();
             },
             remove: async (id: string) => {

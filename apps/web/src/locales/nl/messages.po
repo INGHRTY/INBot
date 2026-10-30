@@ -6214,6 +6214,11 @@ msgstr "Gebruik"
 msgid "Use {0}"
 msgstr "{0} gebruiken"
 
+#. placeholder {0}: connection.label
+#: src/components/DeviceModelSettings.tsx
+msgid "Use {0} for tasks"
+msgstr ""
+
 #: src/pages/HostComputerPrompt.tsx
 msgid "Use {hostLabel}"
 msgstr "{hostLabel} gebruiken"

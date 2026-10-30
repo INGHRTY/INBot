@@ -58,15 +58,26 @@ export function DeviceModelSettings() {
             key={connection.id}
             label={<span dir="auto">{connection.label}</span>}
             control={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t`Remove ${connection.label}`}
-                disabled={pending}
-                onClick={() => void run(() => models.remove(connection.id))}
-              >
-                <Trash2 />
-              </Button>
+              <>
+                <input
+                  type="radio"
+                  name="device-model-default"
+                  className="size-4 accent-primary"
+                  checked={connection.isDefault}
+                  aria-label={t`Use ${connection.label} for tasks`}
+                  disabled={pending}
+                  onChange={() => void run(() => models.setDefault(connection.id))}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t`Remove ${connection.label}`}
+                  disabled={pending}
+                  onClick={() => void run(() => models.remove(connection.id))}
+                >
+                  <Trash2 />
+                </Button>
+              </>
             }
           />
         ))}

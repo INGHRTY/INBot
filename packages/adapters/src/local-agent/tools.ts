@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
@@ -105,12 +105,19 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         } catch (error) {
           return refused(error instanceof Error ? error.message : "Those actions are not valid");
         }
-        const application = await deps.frontmostApp();
+        const frontmost = await deps.frontmostApp();
+        // A batch that brings another application forward acts in that one from then on,
+        // so each action is judged against the application it will really land in.
+        let application = frontmost;
         for (const action of actions) {
           const request = approvalFor(action, application);
-          if (!request) continue;
-          const verdict = await gate(deps, subjectFor(action, application), request);
-          if (verdict.outcome === "refused") return refused(verdict.reason);
+          if (request) {
+            const verdict = await gate(deps, subjectFor(action, application), request);
+            if (verdict.outcome === "refused") return refused(verdict.reason);
+          }
+          if (action.kind === "focus" || action.kind === "launch") {
+            application = action.application;
+          }
         }
         const result = await deps.screen.act(actions, {
           observe: (params as { observe?: boolean }).observe !== false,
@@ -121,7 +128,7 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
             ? observationContent(observation)
             : [{ type: "text", text: `Completed ${result.completed} actions.` }],
           details: {
-            summary: application ? `Used the computer in ${application}` : "Used the computer",
+            summary: frontmost ? `Used the computer in ${frontmost}` : "Used the computer",
             completed: result.completed,
           },
         };
@@ -139,7 +146,10 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
       async execute(_id, params) {
         const command = String((params as { command?: unknown }).command ?? "").trim();
         if (!command) return refused("The command is empty");
-        const folder = resolveInside(deps.home, String((params as { cwd?: unknown }).cwd ?? ""));
+        const folder = await resolveInside(
+          deps.home,
+          String((params as { cwd?: unknown }).cwd ?? ""),
+        );
         if (!folder) return refused("That folder is outside the task's workspace");
         const verdict = await gate(
           deps,
@@ -150,6 +160,7 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
             summary: `Run a shell command`,
             detail: command,
           },
+          folder,
         );
         if (verdict.outcome === "refused") return refused(verdict.reason);
         const result = await deps.runShell(command, folder);
@@ -174,7 +185,10 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         "Read a file from this computer. Paths are relative to the task's workspace unless they are absolute.",
       parameters: Type.Object({ path: Type.String() }),
       async execute(_id, params) {
-        const target = resolveInside(deps.home, String((params as { path?: unknown }).path ?? ""));
+        const target = await resolveInside(
+          deps.home,
+          String((params as { path?: unknown }).path ?? ""),
+        );
         if (!target) return refused("That path is outside the task's workspace");
         const verdict = await gate(
           deps,
@@ -208,7 +222,10 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         "Write a file on this computer, replacing it when it already exists. Paths are relative to the task's workspace unless they are absolute.",
       parameters: Type.Object({ path: Type.String(), content: Type.String() }),
       async execute(_id, params) {
-        const target = resolveInside(deps.home, String((params as { path?: unknown }).path ?? ""));
+        const target = await resolveInside(
+          deps.home,
+          String((params as { path?: unknown }).path ?? ""),
+        );
         if (!target) return refused("That path is outside the task's workspace");
         const content = String((params as { content?: unknown }).content ?? "");
         if (Buffer.byteLength(content) > MAX_FILE_BYTES)
@@ -244,7 +261,10 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         "List the files and folders in a folder on this computer. Paths are relative to the task's workspace unless they are absolute.",
       parameters: Type.Object({ path: Type.Optional(Type.String()) }),
       async execute(_id, params) {
-        const target = resolveInside(deps.home, String((params as { path?: unknown }).path ?? ""));
+        const target = await resolveInside(
+          deps.home,
+          String((params as { path?: unknown }).path ?? ""),
+        );
         if (!target) return refused("That path is outside the task's workspace");
         const verdict = await gate(
           deps,
@@ -278,7 +298,10 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
       description: "Open a file on this computer with the application that handles it.",
       parameters: Type.Object({ path: Type.String() }),
       async execute(_id, params) {
-        const target = resolveInside(deps.home, String((params as { path?: unknown }).path ?? ""));
+        const target = await resolveInside(
+          deps.home,
+          String((params as { path?: unknown }).path ?? ""),
+        );
         if (!target) return refused("That path is outside the task's workspace");
         const verdict = await gate(
           deps,
@@ -312,7 +335,7 @@ export function localAgentTools(deps: LocalToolDeps): AgentTool[] {
         const uri = (params as { uri?: unknown }).uri;
         const verdict = await gate(
           deps,
-          { kind: "launch", application },
+          { kind: "launch", application, ...(uri ? { uri: String(uri) } : {}) },
           {
             at: new Date().toISOString(),
             action: "launch",
@@ -344,8 +367,10 @@ async function gate(
   deps: LocalToolDeps,
   subject: GrantSubject,
   request: Omit<ActionApprovalRequest, "approvalId">,
+  /** Where the action runs, so a relative path is judged where it will resolve. */
+  cwd?: string,
 ): Promise<Gate> {
-  const decision = checkGrant(deps.grant, subject);
+  const decision = checkGrant(deps.grant, subject, cwd ? { cwd } : {});
   if (decision.outcome === "allowed") return { outcome: "allowed" };
   if (decision.outcome === "denied") return { outcome: "refused", reason: decision.reason };
   const pattern = actionPattern(subject);
@@ -417,9 +442,17 @@ function subjectFor(action: ComputerAction, application?: string): GrantSubject 
     case "open":
       return { kind: "open", path: action.path };
     case "launch":
-      return { kind: "launch", application: action.application };
+      return {
+        kind: "launch",
+        application: action.application,
+        ...(action.uri ? { uri: action.uri } : {}),
+      };
     case "focus":
-      return { kind: "focus", application: action.application };
+      return {
+        kind: "focus",
+        application: action.application,
+        ...(action.uri ? { uri: action.uri } : {}),
+      };
     case "wait":
       return { kind: "observe" };
   }
@@ -501,9 +534,35 @@ function refused(reason: string) {
 }
 
 /** Resolves a path inside the task's workspace, or nothing when it points outside. */
-function resolveInside(home: string, target: string): string | undefined {
+/**
+ * The real path of a target inside the task's workspace, or nothing.
+ *
+ * The link is followed, not just the text: a symlink in the workspace can point at a file
+ * the grant never named, and reading or writing through it would leave the workspace
+ * without any path ever looking like it did.
+ */
+async function resolveInside(home: string, target: string): Promise<string | undefined> {
   const wanted = target.trim();
   const resolved = path.resolve(home, wanted || ".");
   if (!isAllowedDesktopPath(resolved, [home])) return undefined;
-  return resolved;
+  const real = await realPathOf(resolved);
+  return isAllowedDesktopPath(real, [await realPathOf(home)]) ? real : undefined;
+}
+
+/** The path with every link followed, including the parts that do not exist yet. */
+async function realPathOf(file: string): Promise<string> {
+  const missing: string[] = [];
+  let current = path.resolve(file);
+  for (;;) {
+    try {
+      const real = await realpath(current);
+      return missing.length ? path.join(real, ...missing.reverse()) : real;
+    } catch {
+      const parent = path.dirname(current);
+      // A path that cannot be resolved at all is judged as written.
+      if (parent === current) return path.resolve(file);
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
 }
