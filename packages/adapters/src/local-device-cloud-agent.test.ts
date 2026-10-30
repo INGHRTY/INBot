@@ -120,6 +120,16 @@ describe("local device cloud agent", () => {
     expect(calls).toEqual(["device-1", "device-1"]);
   });
 
+  it("sends no key to the computer, only the name of a connection", async () => {
+    const { gateway, started } = device();
+    await provider(gateway).launch({ idempotencyKey: "task-1", prompt: "Open Safari" }, context);
+    // The whole dispatched task is serialized, so this is what actually crosses the wire.
+    const task = started[0] as { model?: Record<string, unknown> };
+    // Only the connection's name travels; the key stays in the computer's keychain.
+    expect(task.model).toEqual({ provider: "openai", id: "gpt", connectionRef: "ref-1" });
+    expect(Object.keys(task.model ?? {})).not.toContain("apiKey");
+  });
+
   it("reports a running task as running", async () => {
     const { gateway } = device();
     const snapshot = await provider(gateway).get("task-1", context);

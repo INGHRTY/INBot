@@ -72,6 +72,28 @@ describe("device task messages", () => {
     ).toBe(true);
   });
 
+  it("accepts a task that names no model, so the computer picks its own", () => {
+    const parsed = userDeviceServerMessage.safeParse({
+      type: "task",
+      id: "1",
+      task: {
+        taskId: "task-1",
+        prompt: "Open Safari",
+        botId: "bot-1",
+        grant: {
+          preapproved: {},
+          onDemand: "ask",
+          denied: {},
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        },
+        budget: { maxSteps: 10, maxSeconds: 300 },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    // The model key is absent, not null, so an older server cannot send a wrong one.
+    expect(parsed.success && parsed.data.type === "task" && parsed.data.task.model).toBeUndefined();
+  });
+
   it("refuses a task that names no grant", () => {
     const { grant: _grant, ...withoutGrant } = task;
     expect(localAgentTaskSchema.safeParse(withoutGrant).success).toBe(false);
