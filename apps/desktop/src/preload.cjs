@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld("rakazoDesktop", {
   device: {
     state: () => ipcRenderer.invoke("desktop.device.state"),
     setAllowed: (allowed) => ipcRenderer.invoke("desktop.device.setAllowed", allowed),
+    models: {
+      list: () => ipcRenderer.invoke("desktop.device.models.list"),
+      save: (input) => ipcRenderer.invoke("desktop.device.models.save", input),
+      remove: (id) => ipcRenderer.invoke("desktop.device.models.remove", id),
+    },
   },
   monitoring: {
     enabled: () => ipcRenderer.invoke("desktop.monitoring.enabled"),

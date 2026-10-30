@@ -568,6 +568,10 @@ msgstr "添加项目"
 msgid "Add MCP server"
 msgstr "添加 MCP 服务器"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Add model"
+msgstr ""
+
 #: src/pages/ScratchpadSection.tsx
 msgid "Add open work"
 msgstr "添加待办事项"
@@ -780,6 +784,7 @@ msgid "Any model, with your own key"
 msgstr "任意模型，使用你自己的密钥"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/lib/localized-provider-hint.ts
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/model-settings/compatible-key-field.tsx
@@ -2161,6 +2166,10 @@ msgstr "无法保存该语音"
 #: src/components/VaultSettings.tsx
 msgid "Could not save the credential"
 msgstr "无法保存凭据"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Could not save the model."
+msgstr ""
 
 #: src/pages/shell/message-cards.tsx
 msgid "Could not save this choice"
@@ -3760,6 +3769,7 @@ msgstr "未接来电"
 msgid "Mode"
 msgstr "模式"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
 #: src/pages/model-settings/model-picker.tsx
@@ -4287,6 +4297,10 @@ msgstr "OpenClaw 或 Hermes"
 msgid "Optional"
 msgstr "可选"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Optional for a model on this Mac"
+msgstr ""
+
 #: src/pages/McpServersOverlay.tsx
 msgid "Optional header value"
 msgstr "可选请求头值"
@@ -4537,6 +4551,7 @@ msgstr "程序：{name}"
 msgid "Protected input"
 msgstr "受保护输入"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -4579,6 +4594,10 @@ msgstr "表情回应"
 #: src/pages/shell/bot-panel.tsx
 msgid "Read replies aloud"
 msgstr "朗读回复"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Reads screenshots"
+msgstr ""
 
 #: src/pages/shell/import-status.ts
 msgid "Ready"
@@ -4748,8 +4767,10 @@ msgid "Remove"
 msgstr "移除"
 
 #. placeholder {0}: attachment.file.name
+#. placeholder {0}: connection.label
 #. placeholder {0}: device.name
 #: src/components/ComputerDeviceSettings.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/shell/composer.tsx
 msgid "Remove {0}"
 msgstr "移除 {0}"
@@ -5046,6 +5067,7 @@ msgid "Saturday"
 msgstr "周六"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/SkillDraftCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
@@ -5267,6 +5289,7 @@ msgstr "请填写 Serenity 端点。"
 msgid "Server name"
 msgstr "服务器名称"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
@@ -5746,6 +5769,10 @@ msgstr ""
 msgid "The connection timed out."
 msgstr "连接超时。"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "The key is stored on this Mac only."
+msgstr ""
+
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
 msgid "The model hit its output limit before finishing its reply."
@@ -5877,6 +5904,10 @@ msgstr "此导入已使用过。请重新选择文件。"
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
 msgstr "这台 Mac"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "This Mac's model"
+msgstr ""
 
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts

@@ -568,6 +568,10 @@ msgstr "Öğe ekle"
 msgid "Add MCP server"
 msgstr "MCP sunucusu ekle"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Add model"
+msgstr ""
+
 #: src/pages/ScratchpadSection.tsx
 msgid "Add open work"
 msgstr "Açık iş ekle"
@@ -780,6 +784,7 @@ msgid "Any model, with your own key"
 msgstr ""
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/lib/localized-provider-hint.ts
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/model-settings/compatible-key-field.tsx
@@ -2160,6 +2165,10 @@ msgstr "Bu ses kaydedilemedi"
 
 #: src/components/VaultSettings.tsx
 msgid "Could not save the credential"
+msgstr ""
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Could not save the model."
 msgstr ""
 
 #: src/pages/shell/message-cards.tsx
@@ -3760,6 +3769,7 @@ msgstr ""
 msgid "Mode"
 msgstr "Mod"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
 #: src/pages/model-settings/model-picker.tsx
@@ -4287,6 +4297,10 @@ msgstr "OpenClaw veya Hermes"
 msgid "Optional"
 msgstr "İsteğe bağlı"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Optional for a model on this Mac"
+msgstr ""
+
 #: src/pages/McpServersOverlay.tsx
 msgid "Optional header value"
 msgstr "İsteğe bağlı üstbilgi değeri"
@@ -4537,6 +4551,7 @@ msgstr "Program: {name}"
 msgid "Protected input"
 msgstr ""
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -4579,6 +4594,10 @@ msgstr "Tepkiler"
 #: src/pages/shell/bot-panel.tsx
 msgid "Read replies aloud"
 msgstr "Yanıtları sesli oku"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Reads screenshots"
+msgstr ""
 
 #: src/pages/shell/import-status.ts
 msgid "Ready"
@@ -4748,8 +4767,10 @@ msgid "Remove"
 msgstr "Kaldır"
 
 #. placeholder {0}: attachment.file.name
+#. placeholder {0}: connection.label
 #. placeholder {0}: device.name
 #: src/components/ComputerDeviceSettings.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/shell/composer.tsx
 msgid "Remove {0}"
 msgstr "{0} kaldır"
@@ -5046,6 +5067,7 @@ msgid "Saturday"
 msgstr "Cumartesi"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/SkillDraftCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
@@ -5267,6 +5289,7 @@ msgstr ""
 msgid "Server name"
 msgstr "Sunucu adı"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
@@ -5746,6 +5769,10 @@ msgstr ""
 msgid "The connection timed out."
 msgstr "Bağlantı zaman aşımına uğradı."
 
+#: src/components/DeviceModelSettings.tsx
+msgid "The key is stored on this Mac only."
+msgstr ""
+
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
 msgid "The model hit its output limit before finishing its reply."
@@ -5877,6 +5904,10 @@ msgstr "Bu içe aktarma zaten kullanıldı. Dosyaları yeniden seç."
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
 msgstr "bu Mac"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "This Mac's model"
+msgstr ""
 
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts

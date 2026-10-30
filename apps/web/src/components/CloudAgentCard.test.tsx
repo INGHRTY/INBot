@@ -63,6 +63,11 @@ it("shows what the task answered", () => {
   expect(view.textContent).toContain("Safari is open.");
 });
 
+it("says why the task stopped short", () => {
+  const view = render(card({ status: "finished", blockedReason: "Network is off for this task." }));
+  expect(view.textContent).toContain("Network is off for this task.");
+});
+
 it("answers the action it showed, not whatever the task asks next", async () => {
   const answers: Array<[string, boolean]> = [];
   const block = card({

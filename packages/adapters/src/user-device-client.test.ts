@@ -434,6 +434,41 @@ describe("device tasks", () => {
     expect(events.at(-1)?.answer).toBe("Safari is open");
   });
 
+  it("remembers why it refused an action, for a status question after the task", async () => {
+    start({
+      async run(_task, control) {
+        control.event({
+          kind: "blocked",
+          at: "2026-01-01T00:00:00.000Z",
+          reason: "Network access is off for this task.",
+        });
+        return { answer: "I could not fetch the page." };
+      },
+    });
+    const ws = await connection();
+    const received = messages(ws);
+    ws.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "finished",
+      ),
+    );
+    const frames: { frame?: { value?: { blocked?: { reason: string } } } }[] = [];
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString())));
+    ws.send(
+      JSON.stringify({
+        type: "request",
+        id: "s1",
+        request: { method: "taskStatus", botId: "bot", taskId: localTask.taskId },
+      }),
+    );
+    await until(() => frames.some((frame) => frame.frame?.value?.blocked));
+    expect(frames.find((frame) => frame.frame?.value?.blocked)?.frame?.value?.blocked?.reason).toBe(
+      "Network access is off for this task.",
+    );
+  });
+
   it("asks the cloud before an action and waits for the answer", async () => {
     let answered = false;
     start({
@@ -494,6 +529,41 @@ describe("device tasks", () => {
       .filter((message) => message.type === "taskEvent")
       .map((message) => (message.event as { answer?: string }).answer);
     expect(answers).toEqual(["done", "done"]);
+  });
+
+  it("answers for a task it ran before the server restarted", async () => {
+    start({
+      async run() {
+        return { answer: "Safari is open" };
+      },
+    });
+    const first = await connection();
+    const received = messages(first);
+    first.send(JSON.stringify({ type: "task", id: "t1", task: localTask }));
+    await until(() =>
+      received.some(
+        (message) =>
+          message.type === "taskEvent" && (message.event as { kind: string }).kind === "finished",
+      ),
+    );
+    // The server went away and came back; the computer reconnects on its own.
+    first.terminate();
+    await until(() => sockets.length > 1);
+    const again = sockets.at(-1)!;
+    const frames: { frame?: { value?: { state?: string; answer?: string } } }[] = [];
+    again.on("message", (data) => frames.push(JSON.parse(data.toString())));
+    again.send(
+      JSON.stringify({
+        type: "request",
+        id: "s1",
+        request: { method: "taskStatus", botId: "bot", taskId: localTask.taskId },
+      }),
+    );
+    await until(() => frames.some((frame) => frame.frame?.value?.state));
+    expect(frames.find((frame) => frame.frame?.value?.state)?.frame?.value).toMatchObject({
+      state: "finished",
+      answer: "Safari is open",
+    });
   });
 
   it("stops a cancelled task", async () => {

@@ -94,6 +94,16 @@ describe("device task messages", () => {
     expect(parsed.success && parsed.data.type === "task" && parsed.data.task.model).toBeUndefined();
   });
 
+  it("carries no way to route a model call through the server", () => {
+    // A model on this computer is a named connection, never a key or an endpoint from
+    // the cloud: there is no proxied tier for a task to select.
+    const parsed = localAgentTaskSchema.parse({
+      ...task,
+      model: { provider: "openai", id: "gpt", apiKey: "sk-test", baseUrl: "https://proxy.test" },
+    });
+    expect(parsed.model).toEqual({ provider: "openai", id: "gpt" });
+  });
+
   it("refuses a task that names no grant", () => {
     const { grant: _grant, ...withoutGrant } = task;
     expect(localAgentTaskSchema.safeParse(withoutGrant).success).toBe(false);

@@ -46,6 +46,7 @@ export function cloudAgentBlockFromPayload(
     ...(cloudAgentHttpsUrl(String(payload.prUrl ?? "")) ? { prUrl: String(payload.prUrl) } : {}),
     ...(payload.latestRunId ? { latestRunId: String(payload.latestRunId) } : {}),
     ...(payload.result ? { result: String(payload.result) } : {}),
+    ...(payload.blockedReason ? { blockedReason: String(payload.blockedReason) } : {}),
     ...(awaitingApprovalFrom(payload.awaitingApproval)
       ? { awaitingApproval: awaitingApprovalFrom(payload.awaitingApproval)! }
       : {}),

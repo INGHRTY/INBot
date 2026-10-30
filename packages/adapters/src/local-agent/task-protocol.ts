@@ -104,6 +104,13 @@ export const taskStatusSchema = z.object({
   /** The last few things the task did, as the computer already reported them. */
   steps: z.number().int().nonnegative().max(200).optional(),
   /**
+   * The last action this task refused to take, and why. The reason is a sentence the
+   * cloud can repeat to the person; the screen, the coordinates and any typed text stay here.
+   */
+  blocked: z
+    .object({ at: z.string().min(1).max(64), reason: z.string().min(1).max(2000) })
+    .optional(),
+  /**
    * The action the task is waiting for the person to approve. Present only while a
    * task is stopped at an action it may not take alone.
    */

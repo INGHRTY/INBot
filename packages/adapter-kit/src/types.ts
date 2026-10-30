@@ -1172,6 +1172,11 @@ export interface CloudAgentSnapshot {
    */
   result?: string;
   /**
+   * The last action a task on someone's own computer refused to take, and why, so the
+   * cloud can tell the person. The screen it would have touched never leaves the computer.
+   */
+  blockedReason?: string;
+  /**
    * The action the agent is waiting to be allowed to take. A task on someone's own
    * computer stops at an action it may not take alone, and this is what it stopped at.
    */

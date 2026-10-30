@@ -83,6 +83,11 @@ export function CloudAgentCard({
             {block.result}
           </span>
         ) : null}
+        {block.blockedReason ? (
+          <span className="text-muted-foreground" dir="auto">
+            {block.blockedReason}
+          </span>
+        ) : null}
       </CardContent>
     </Card>
   );

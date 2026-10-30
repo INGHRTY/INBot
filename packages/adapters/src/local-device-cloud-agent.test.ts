@@ -165,6 +165,17 @@ describe("local device cloud agent", () => {
     });
   });
 
+  it("carries the reason the computer refused an action", async () => {
+    const { gateway, setStatus } = device();
+    setStatus({
+      taskId: "task-1",
+      state: "running",
+      blocked: { at: "2026-10-30T12:00:00.000Z", reason: "Network access is off for this task." },
+    });
+    const snapshot = await provider(gateway).get("task-1", context);
+    expect(snapshot.blockedReason).toBe("Network access is off for this task.");
+  });
+
   it("reports a failed task as failed", async () => {
     const { gateway, setStatus } = device();
     setStatus({ taskId: "task-1", state: "failed", error: "The screen was locked" });

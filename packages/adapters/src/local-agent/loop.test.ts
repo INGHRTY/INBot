@@ -86,6 +86,7 @@ describe("local agent loop", () => {
         modelId: "fixture",
         baseUrl: model.url,
         apiKey: "test-key",
+        acceptsImages: true,
       });
       const result = await runLocalAgent({
         task: {
@@ -131,6 +132,12 @@ describe("local agent loop", () => {
         action: "computer_observe",
         summary: "Looked at the screen",
       });
+      // The frame goes straight to the model from this computer. Nothing that leaves
+      // for the cloud carries it, not even the bytes of a tiny test image.
+      const frame = Buffer.from(png).toString("base64");
+      expect(model.bodies).toHaveLength(2);
+      expect(model.bodies[1]).toContain(frame);
+      expect(JSON.stringify(events)).not.toContain(frame);
     } finally {
       await model.close();
     }

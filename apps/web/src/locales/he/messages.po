@@ -568,6 +568,10 @@ msgstr "הוספת פריט"
 msgid "Add MCP server"
 msgstr "הוספת שרת MCP"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Add model"
+msgstr ""
+
 #: src/pages/ScratchpadSection.tsx
 msgid "Add open work"
 msgstr "הוספת עבודה פתוחה"
@@ -780,6 +784,7 @@ msgid "Any model, with your own key"
 msgstr "כל מודל, עם מפתח משלך"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/lib/localized-provider-hint.ts
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/model-settings/compatible-key-field.tsx
@@ -2161,6 +2166,10 @@ msgstr "לא ניתן לשמור את הקול"
 #: src/components/VaultSettings.tsx
 msgid "Could not save the credential"
 msgstr "לא ניתן לשמור את פרטי הגישה"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Could not save the model."
+msgstr ""
 
 #: src/pages/shell/message-cards.tsx
 msgid "Could not save this choice"
@@ -3760,6 +3769,7 @@ msgstr ""
 msgid "Mode"
 msgstr "מצב"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
 #: src/pages/model-settings/model-picker.tsx
@@ -4287,6 +4297,10 @@ msgstr "OpenClaw או Hermes"
 msgid "Optional"
 msgstr "אופציונלי"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Optional for a model on this Mac"
+msgstr ""
+
 #: src/pages/McpServersOverlay.tsx
 msgid "Optional header value"
 msgstr "ערך header אופציונלי"
@@ -4537,6 +4551,7 @@ msgstr "תוכנה: {name}"
 msgid "Protected input"
 msgstr "קלט מוגן"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -4579,6 +4594,10 @@ msgstr "אמוג׳י"
 #: src/pages/shell/bot-panel.tsx
 msgid "Read replies aloud"
 msgstr "הקראת תשובות בקול"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Reads screenshots"
+msgstr ""
 
 #: src/pages/shell/import-status.ts
 msgid "Ready"
@@ -4748,8 +4767,10 @@ msgid "Remove"
 msgstr "הסרה"
 
 #. placeholder {0}: attachment.file.name
+#. placeholder {0}: connection.label
 #. placeholder {0}: device.name
 #: src/components/ComputerDeviceSettings.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/shell/composer.tsx
 msgid "Remove {0}"
 msgstr "הסרת {0}"
@@ -5046,6 +5067,7 @@ msgid "Saturday"
 msgstr "שבת"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/SkillDraftCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
@@ -5267,6 +5289,7 @@ msgstr "נדרשת נקודת קצה של Serenity."
 msgid "Server name"
 msgstr "שם השרת"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
@@ -5746,6 +5769,10 @@ msgstr ""
 msgid "The connection timed out."
 msgstr "תם הזמן הקצוב לחיבור."
 
+#: src/components/DeviceModelSettings.tsx
+msgid "The key is stored on this Mac only."
+msgstr ""
+
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
 msgid "The model hit its output limit before finishing its reply."
@@ -5877,6 +5904,10 @@ msgstr "הייבוא הזה כבר נוצל. יש לבחור את הקבצים �
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
 msgstr "ה-Mac הזה"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "This Mac's model"
+msgstr ""
 
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts

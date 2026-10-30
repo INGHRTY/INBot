@@ -956,6 +956,8 @@ model CloudAgent {
   result              String?
   /** The action a device task is waiting to be allowed to take, while it waits. */
   awaitingApproval    Json?
+  /** The last action a device task refused to take, and why. Never a frame or a screenshot. */
+  blockedReason       String?
   launchRequest       Json
   launchDispatched    Boolean  @default(false)
   followup            Json?

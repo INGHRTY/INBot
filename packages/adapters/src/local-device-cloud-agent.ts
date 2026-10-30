@@ -17,8 +17,6 @@ import type { UserDeviceGateway, UserDeviceTaskCommand } from "./user-device-pro
 
 /** How long a status question to the computer may take. */
 const STATUS_TIMEOUT_MS = 20_000;
-/** How long an instruction handed to a running task may take to be accepted. */
-const REPLY_TIMEOUT_MS = 20_000;
 
 export interface LocalDeviceCloudAgentOptions {
   devices: UserDeviceGateway;
@@ -92,6 +90,7 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
       title: "",
       status: statusState(status),
       ...(status.answer !== undefined ? { result: status.answer } : {}),
+      ...(status.blocked ? { blockedReason: status.blocked.reason } : {}),
       ...(status.awaitingApproval ? { awaitingApproval: status.awaitingApproval } : {}),
       latestRunId: id,
     };

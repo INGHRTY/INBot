@@ -44,6 +44,33 @@ export interface RakazoDesktopDevice {
 }
 
 /**
+ * A model connection stored on this computer.
+ *
+ * Its key lives in this computer's keychain and never appears here: the cloud learns the
+ * connection's id and nothing else.
+ */
+export interface RakazoDesktopModelConnection {
+  id: string;
+  label: string;
+  provider: string;
+  modelId: string;
+  /** Where a custom or local model server lives. */
+  baseUrl?: string;
+  /** Whether the model reads screenshots, which a task on this computer needs. */
+  acceptsImages: boolean;
+}
+
+/** What a person enters to add a model connection. */
+export interface RakazoDesktopModelInput {
+  provider: string;
+  modelId: string;
+  /** The key, written to the keychain. Optional for a local model server. */
+  apiKey?: string;
+  baseUrl?: string;
+  acceptsImages: boolean;
+}
+
+/**
  * What the system recognizer reports for one listening session, shaped after Web Speech:
  * `result` carries the session's whole text so far, `error` a Web Speech error code,
  * and `end` always comes last.
@@ -71,6 +98,14 @@ export interface RakazoDesktop {
     state: () => Promise<RakazoDesktopDevice | null>;
     /** Turning it on asks with a native prompt the page cannot answer. */
     setAllowed: (allowed: boolean) => Promise<RakazoDesktopDevice | null>;
+    /** The models a task on this computer may use. Absent on older releases. */
+    models?: {
+      /** Without keys. */
+      list: () => Promise<RakazoDesktopModelConnection[]>;
+      /** Adds or replaces one connection and returns the list. */
+      save: (input: RakazoDesktopModelInput) => Promise<RakazoDesktopModelConnection[]>;
+      remove: (id: string) => Promise<RakazoDesktopModelConnection[]>;
+    };
   };
   /** False for local builds, whose errors must not reach production reporting. Absent on older releases. */
   monitoring?: {

@@ -255,6 +255,8 @@ function snapshotData(snapshot: CloudAgentSnapshot): Prisma.CloudAgentUpdateMany
     latestRunId: snapshot.latestRunId,
     // The answer of a device task, which has no pull request to point at instead.
     result: snapshot.result,
+    // The last refusal of a device task, so the card can say why it stopped short.
+    blockedReason: snapshot.blockedReason,
     // Cleared once the task is not running, so a finished card never shows a stale prompt.
     awaitingApproval:
       snapshot.status === "running" && snapshot.awaitingApproval

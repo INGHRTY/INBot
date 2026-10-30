@@ -85,4 +85,14 @@ describe("shared cloud agent projection", () => {
     ).toBe("Safari is open");
     expect(cloudAgentBlockFromPayload({ status: "running", result: "" }).result).toBeUndefined();
   });
+
+  it("carries the computer's reason for refusing an action", () => {
+    expect(
+      cloudAgentBlockFromPayload({
+        status: "running",
+        blockedReason: "Network access is off for this task.",
+      }).blockedReason,
+    ).toBe("Network access is off for this task.");
+    expect(cloudAgentBlockFromPayload({ status: "running" }).blockedReason).toBeUndefined();
+  });
 });

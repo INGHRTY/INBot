@@ -36,6 +36,7 @@ import { SuccessPop } from "../components/ai/primitives";
 import { ComputerDeviceSettings } from "../components/ComputerDeviceSettings";
 import { ComputersUnavailableHint } from "../components/ComputersUnavailableHint";
 import { DesktopUpdateSection } from "../components/DesktopUpdates";
+import { DeviceModelSettings } from "../components/DeviceModelSettings";
 import { PasskeySettings } from "../components/PasskeySettings";
 import { SettingsGroup, SettingsRow } from "../components/SettingsRows";
 import { TrustedLinkSitesSettings } from "../components/TrustedLinkSitesSettings";
@@ -463,6 +464,7 @@ export function GeneralSettingsPanels({
 
       <TrustedLinkSitesSettings />
       <ComputerDeviceSettings />
+      <DeviceModelSettings />
 
       {showPassword || passkeysSupported ? (
         <SettingsGroup title={<Trans>Security</Trans>}>

@@ -661,16 +661,17 @@ v1 计划里的「静帧 `observe` + 动作 `act`」的**底层原语**（截图
 
 - [x] Mac 端未授权屏幕录制时，本地 agent 拒绝 GUI 任务并给出「需要屏幕录制权限」的清晰原因，不静默失败。（`HostScreen.permissionProblem`，有测试）
 - [ ] 授权后，本地 agent 能在本地浏览器 fixture 上完成「打开 → 点击 → 读取结果」，全程**无图片上行**（用抓包或服务端日志证明）。
-- [ ] 默认档（你的 key 直连）下，屏幕帧从 Mac 直达模型厂商：**Rakazo 服务端日志与数据库中检索不到任何截图字节**。
-- [ ] 不存在「经 Rakazo 代理模型调用」这一档：配置界面里没有这个选项，协议里也没有这个字段。
-- [ ] 授权包为默认全禁时，任务只允许 `read_file` 范围内的只读操作；越界动作产生 `blocked` 事件，云端能看到原因。
+  - 「无图片上行」已由 loop 测试钉住：截图只出现在发给模型厂商的请求体里，上报的事件里连一张测试图的 base64 都没有。剩下的一半（真实 GUI 打开→点击→读取）需要一台已授予屏幕录制与辅助功能的 Mac 手动跑。
+- [x] 默认档（你的 key 直连）下，屏幕帧从 Mac 直达模型厂商：**Rakazo 服务端日志与数据库中检索不到任何截图字节**。（设备端 loop 直接调用厂商；协议里的事件只有短字符串，服务端只存 `CloudAgent` 上的文本字段。`loop.test.ts` 断言帧只出现在模型请求里、事件里没有任何字节）
+- [x] 不存在「经 Rakazo 代理模型调用」这一档：配置界面里没有这个选项，协议里也没有这个字段。（任务里只有 `connectionRef`；多带的 `apiKey`/`baseUrl` 会被 schema 丢掉，有测试）
+- [x] 授权包为默认全禁时，任务只允许 `read_file` 范围内的只读操作；越界动作产生 `blocked` 事件，云端能看到原因。（设备把最后一次拒绝的原因报进 `taskStatus.blocked`，云端存进 `CloudAgent.blockedReason`，卡片显示、`cloud_agent_status` 也带出来；有测试）
 - [x] **逐次确认生效**：一个不在 `preapproved` 里的点击动作会挂起设备端、在云端弹出显示具体动作的审批卡；批准后执行，拒绝后不执行。（有测试，覆盖整条 RPC）
 - [x] **拒绝有记忆**：用户在一次任务里拒绝过 `type` 动作后，同类 `type` 动作后续直接被拒，不再弹卡。（有测试；每次审批另有独立 id，防止旧批准命中新动作）
 - [x] **`type` 永不被预授权**：即使授权包把某应用列入 `preapproved`，`type` 动作仍走逐次确认，且审批卡显示待输入文本全文。（有测试）
 - [x] **网络默认关闭**：`shell` 里的 `curl` 被拒；`web_fetch` 除非 `preapproved` 显式列出 host 否则被拒。（含 `bash -c "curl …"`、`git push`、`python -c` 等绕过，有测试）
 - [x] 授权包过期后，本地 agent 立即停止并回报。（每个动作都判过期，有测试）
 - [x] 菜单栏「停止」在 2 秒内中止本地任务，且后续工具调用全部被拒。（中断走 abort，工具在 `signal` 上停；菜单栏在本机验证过显示与消失）
-- [ ] 本地任务进行中，服务端重启后任务状态可恢复（`CloudAgent` 的 lease/fence 语义已覆盖，需验证）。
+- [x] 本地任务进行中，服务端重启后任务状态可恢复（`CloudAgent` 的 lease/fence 语义已覆盖，需验证）。（设备的任务状态存在连接之外：断线重连后 `taskStatus` 仍回答得上，云端下一次 poll 就能落到终态；有测试。断线时正在跑的任务按设计中止并报 failed，不会悄悄继续）
 - [x] provider key 只存在于 Mac Keychain：服务端数据库、API 响应、日志中均检索不到该 key。（下发任务里只有 `connectionRef`，有测试）
 - [x] 老版本桌面客户端（不认识 `task` 消息）连接时，设备侧忽略该消息，云端在超时后标记任务失败，不崩溃。（协议测试覆盖两个方向）
 
@@ -945,6 +946,8 @@ M2 的采集端可以与 M1 主体并行开发。
 | 设备端回答任务状态（`taskStatus`） | **已实现** | `host-computer-protocol.ts`、`user-device-client.ts` |
 | **云端接线（composition root）** | **已实现**（按人解析 provider） | `packages/adapters/src/{cloud-agent-factory,local-device-cloud-agent-factory}.ts`、`apps/api`、`apps/worker` |
 | 卡片显示「在等什么 / 答了什么」 | **已实现** | `apps/web/src/components/CloudAgentCard.tsx` |
+| 卡片显示「为什么被拒」 | **已实现** | `taskStatus.blocked` → `CloudAgent.blockedReason` → 卡片，迁移 `20261107130000_cloud_agent_blocked_reason` |
+| 设置界面：这台 Mac 用哪个模型 | **已实现** | `apps/web/src/components/DeviceModelSettings.tsx`、`desktop.device.models.*` IPC |
 | 逐次确认可点批准（RPC + 按钮） | **已实现** | `threads.answerCloudAgent`、`CloudAgentCard` |
 | 菜单栏状态 + 一键中断 | **已实现**（本机验证） | `apps/desktop/src/task-tray.ts`、`task-tray-icon.ts`、`main.ts` |
 | 权限缺失时说清该开哪个 | **已实现** | `host-screen.ts`、`local-agent/tools.ts` |

@@ -84,6 +84,8 @@ interface RunningTask {
   finished: boolean;
   /** How many actions the task has reported. */
   steps: number;
+  /** The last action it refused to take, so a status request can explain it. */
+  blocked?: { at: string; reason: string };
 }
 
 /**
@@ -369,9 +371,16 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
           if (isTerminalTaskEvent(event)) {
             running.finished = true;
             completed.set(task.taskId, event);
-            taskStatuses.set(task.taskId, statusFrom(task.taskId, event, running.steps));
+            taskStatuses.set(
+              task.taskId,
+              statusFrom(task.taskId, event, running.steps, running.blocked),
+            );
           } else if (event.kind === "step") {
             running.steps += 1;
+          } else if (event.kind === "blocked") {
+            running.blocked = { at: event.at, reason: event.reason };
+            const known = taskStatuses.get(task.taskId);
+            if (known) taskStatuses.set(task.taskId, { ...known, blocked: running.blocked });
           }
           void sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
         },
@@ -448,7 +457,10 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         if (!running.finished) {
           running.finished = true;
           completed.set(task.taskId, event);
-          taskStatuses.set(task.taskId, statusFrom(task.taskId, event, running.steps));
+          taskStatuses.set(
+            task.taskId,
+            statusFrom(task.taskId, event, running.steps, running.blocked),
+          );
           await sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
         }
       } catch (error) {
@@ -460,7 +472,10 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         if (!running.finished) {
           running.finished = true;
           completed.set(task.taskId, event);
-          taskStatuses.set(task.taskId, statusFrom(task.taskId, event, running.steps));
+          taskStatuses.set(
+            task.taskId,
+            statusFrom(task.taskId, event, running.steps, running.blocked),
+          );
           await sendTaskMessage({ type: "taskEvent", id, event }).catch(() => undefined);
         }
       } finally {
@@ -486,19 +501,31 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
  * The answer travels through the event the cloud already got; a status request from
  * another process has to be told the same thing again.
  */
-function statusFrom(taskId: string, event: TaskEvent, steps: number): TaskStatus {
+function statusFrom(
+  taskId: string,
+  event: TaskEvent,
+  steps: number,
+  blocked?: TaskStatus["blocked"],
+): TaskStatus {
   if (event.kind === "finished") {
     return {
       taskId,
       state: "finished",
       answer: event.answer,
       ...(steps ? { steps } : {}),
+      ...(blocked ? { blocked } : {}),
     };
   }
   if (event.kind === "failed") {
-    return { taskId, state: "failed", error: event.error, ...(steps ? { steps } : {}) };
+    return {
+      taskId,
+      state: "failed",
+      error: event.error,
+      ...(steps ? { steps } : {}),
+      ...(blocked ? { blocked } : {}),
+    };
   }
-  return { taskId, state: "running", ...(steps ? { steps } : {}) };
+  return { taskId, state: "running", ...(steps ? { steps } : {}), ...(blocked ? { blocked } : {}) };
 }
 
 /** Hands an instruction to a task, or to whoever is waiting for one. */

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { bindDeviceModel } from "@rakazo/adapters/local-agent";
 import { startUserDeviceClient } from "@rakazo/adapters/user-device-client";
 import type { DesktopReachability, DesktopSetup, RakazoDesktopDevice } from "@rakazo/contracts";
 import { parseServerHeaders } from "@rakazo/contracts";
@@ -27,6 +28,8 @@ import type { ElectronAutoUpdater } from "./auto-update.js";
 import { DesktopUpdateController, LAUNCH_CHECK_DELAY_MS, updaterSupport } from "./auto-update.js";
 import { createBadgeHandler } from "./badge.js";
 import { openBrowserAuth } from "./browser-auth.js";
+import { DeviceModelStore } from "./device-model-credentials.js";
+import { parseDeviceModelInput } from "./device-model-input.js";
 import { DOCKER_INSTALL_LINKS, isDesktopSetupLink, runDocker } from "./docker-cli.js";
 import { prepareHostComputer } from "./host-computer.js";
 import { saveLocalComputerHost } from "./local-settings.js";
@@ -1410,6 +1413,39 @@ app.whenReady().then(async () => {
     if (origin === null || typeof allowed !== "boolean") return null;
     await userDevices?.setAllowed(origin, allowed);
     return deviceState(remoteDeviceOrigin(event));
+  });
+  // Models belong to this computer, not to a server, so these read and write the
+  // keychain the task runner uses and never cross the network.
+  const deviceModels = new DeviceModelStore(userDataDir, deviceTokenCipher());
+  ipcMain.handle("desktop.device.models.list", (event) =>
+    fromMainWindow(event) ? deviceModels.list() : [],
+  );
+  ipcMain.handle("desktop.device.models.save", async (event, input: unknown) => {
+    if (!fromMainWindow(event)) throw new Error("Models can only be changed from the app window");
+    const connection = parseDeviceModelInput(input);
+    // Fail while the person is still here, not mid-task, when no such model exists.
+    bindDeviceModel({
+      provider: connection.provider,
+      modelId: connection.modelId,
+      acceptsImages: connection.acceptsImages,
+      ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+    });
+    await deviceModels.save(
+      {
+        label: `${connection.provider} ${connection.modelId}`,
+        provider: connection.provider,
+        modelId: connection.modelId,
+        acceptsImages: connection.acceptsImages,
+        ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+      },
+      connection.apiKey,
+    );
+    return deviceModels.list();
+  });
+  ipcMain.handle("desktop.device.models.remove", async (event, id: unknown) => {
+    if (!fromMainWindow(event)) throw new Error("Models can only be changed from the app window");
+    if (typeof id === "string") await deviceModels.remove(id);
+    return deviceModels.list();
   });
   ipcMain.handle(
     "desktop.badge.set",

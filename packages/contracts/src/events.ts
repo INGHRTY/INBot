@@ -243,6 +243,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     latestRunId: z.string().optional(),
     /** What the agent answered, when it answers in text rather than with a pull request. */
     result: z.string().optional(),
+    /** Why a task on the person's computer last refused an action, in the computer's words. */
+    blockedReason: z.string().optional(),
     /**
      * The action the task is waiting for the person to approve. Set while the task
      * runs on their computer and has stopped at an action it may not take alone.

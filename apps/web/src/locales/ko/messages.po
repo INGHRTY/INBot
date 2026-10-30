@@ -568,6 +568,10 @@ msgstr "항목 추가"
 msgid "Add MCP server"
 msgstr "MCP 서버 추가"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Add model"
+msgstr ""
+
 #: src/pages/ScratchpadSection.tsx
 msgid "Add open work"
 msgstr "진행 중인 작업 추가"
@@ -780,6 +784,7 @@ msgid "Any model, with your own key"
 msgstr ""
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/lib/localized-provider-hint.ts
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/model-settings/compatible-key-field.tsx
@@ -2160,6 +2165,10 @@ msgstr "목소리를 저장하지 못했습니다."
 
 #: src/components/VaultSettings.tsx
 msgid "Could not save the credential"
+msgstr ""
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Could not save the model."
 msgstr ""
 
 #: src/pages/shell/message-cards.tsx
@@ -3760,6 +3769,7 @@ msgstr ""
 msgid "Mode"
 msgstr "모드"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
 #: src/pages/model-settings/model-picker.tsx
@@ -4287,6 +4297,10 @@ msgstr "OpenClaw 또는 Hermes"
 msgid "Optional"
 msgstr "선택 사항"
 
+#: src/components/DeviceModelSettings.tsx
+msgid "Optional for a model on this Mac"
+msgstr ""
+
 #: src/pages/McpServersOverlay.tsx
 msgid "Optional header value"
 msgstr "선택 사항인 헤더 값"
@@ -4537,6 +4551,7 @@ msgstr "프로그램: {name}"
 msgid "Protected input"
 msgstr ""
 
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -4579,6 +4594,10 @@ msgstr "반응"
 #: src/pages/shell/bot-panel.tsx
 msgid "Read replies aloud"
 msgstr "답변을 자동으로 읽기"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "Reads screenshots"
+msgstr ""
 
 #: src/pages/shell/import-status.ts
 msgid "Ready"
@@ -4748,8 +4767,10 @@ msgid "Remove"
 msgstr "삭제"
 
 #. placeholder {0}: attachment.file.name
+#. placeholder {0}: connection.label
 #. placeholder {0}: device.name
 #: src/components/ComputerDeviceSettings.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/pages/shell/composer.tsx
 msgid "Remove {0}"
 msgstr "{0} 삭제"
@@ -5046,6 +5067,7 @@ msgid "Saturday"
 msgstr "토요일"
 
 #: src/components/AskCard.tsx
+#: src/components/DeviceModelSettings.tsx
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/SkillDraftCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
@@ -5267,6 +5289,7 @@ msgstr ""
 msgid "Server name"
 msgstr "서버 이름"
 
+#: src/components/DeviceModelSettings.tsx
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/model-settings/compatible-model-fields.tsx
@@ -5746,6 +5769,10 @@ msgstr ""
 msgid "The connection timed out."
 msgstr "연결 시간이 초과되었습니다."
 
+#: src/components/DeviceModelSettings.tsx
+msgid "The key is stored on this Mac only."
+msgstr ""
+
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
 msgid "The model hit its output limit before finishing its reply."
@@ -5877,6 +5904,10 @@ msgstr "이미 사용된 가져오기입니다. 파일을 다시 선택하세요
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
 msgstr "이 Mac"
+
+#: src/components/DeviceModelSettings.tsx
+msgid "This Mac's model"
+msgstr ""
 
 #. js-lingui-explicit-id
 #: src/lib/run-error.ts
