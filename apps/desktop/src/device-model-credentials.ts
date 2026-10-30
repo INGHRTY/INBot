@@ -18,8 +18,6 @@ export interface StoredModelConnection {
   /** Whether the model reads images. */
   acceptsImages: boolean;
   reasoning?: boolean;
-  /** A local model server may live on a private address. */
-  allowPrivate?: boolean;
 }
 
 interface StoredEntry extends StoredModelConnection {
@@ -61,7 +59,6 @@ export class DeviceModelStore {
       ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
       acceptsImages: connection.acceptsImages,
       ...(connection.reasoning ? { reasoning: true } : {}),
-      ...(connection.allowPrivate ? { allowPrivate: true } : {}),
     };
     if (apiKey) {
       if (!(await this.cipher.available())) {
@@ -93,7 +90,6 @@ export class DeviceModelStore {
       ...(apiKey ? { apiKey } : {}),
       acceptsImages: entry.acceptsImages,
       ...(entry.reasoning ? { reasoning: true } : {}),
-      ...(entry.allowPrivate ? { allowPrivate: true } : {}),
     };
   }
 

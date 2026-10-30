@@ -585,14 +585,12 @@ export function bindDeviceModel(models: MutableModels, ref: DeviceModelRef): Mod
 }
 ```
 
-**复用现有 provider 实现，不重写**：
-- 本地模型 → 复用 `pi-local-provider.ts` 的 `localProvider()`（Ollama/LM Studio/llama.cpp/MLX）。
-- 你的 key 直连 → 复用 `pi-openai-compatible-provider.ts` 的 `registerOpenAiCompatibleRuntime()`（OpenRouter / 自建兼容端点）或 Anthropic 的官方 provider。
+**复用 Pi 的 provider 原语，但不复用服务端那层守卫**（实现时修正）：
+- **内置 provider**（OpenAI / Anthropic / OpenRouter 等）→ 复用 Pi 的 `builtinModels()` + `applyPiModelCompatibility()`，设备端和云端走同一份目录。
+- **自建 / 本地端点** → 在设备端用 `createProvider()` + `openAICompletionsApi()` **直接注册**，照抄 `pi-local-provider.ts` 的写法，**不调** `registerOpenAiCompatibleRuntime()`。
+  原因（CI 抓出来的）：`pi-openai-compatible-provider.ts` → `network-address.ts` → `@rakazo/db` → Prisma。桌面端一旦 import 它，esbuild 会把整个数据库包和 Prisma 客户端打进 Electron 主进程——CI 上没有生成 Prisma 客户端，桌面构建直接失败；就算本地生成了，主进程包也会从 6.7 MB 涨到 14 MB，并带进一堆它永远不会用的服务端依赖。改直连注册后 `packages/db` 在桌面 bundle 里是 **0 个模块**。
 
-**注意**：这些 provider 现在的 SSRF 防护是**为服务端写的**（`createAddressCheckedLookup` 阻止解析到私网/元数据地址）。设备端直连时：
-- **本地模型**（`127.0.0.1`/`localhost`）**必须**允许私网地址——现在 `registerOpenAiCompatibleRuntime` 有 `allowPrivate` 选项（`opts.allowPrivate`），设备端本地模型走这个开关。
-- **公网 provider** 仍走默认的地址检查（防 DNS rebinding）。
-- 设备端 agent **默认禁止其他网络出口**（§0.4），所以只有模型端点是可达的——这条把「provider 端点可以是任意私网地址」的风险限制住了：私网例外仅对显式配置的模型端点生效。
+**为什么服务端那层守卫本来也不该来设备端**：它的作用是阻止**bot**在共享服务器上解析到私网/元数据地址。而在用户自己的 Mac 上，`127.0.0.1` 正是本地模型的地址——这个守卫在设备端不是「放宽一下」的问题，而是它保护的资产不在那儿。设备端真正的边界是 §0.4 的默认禁出口。
 
 #### 2.5.5 凭据存取
 

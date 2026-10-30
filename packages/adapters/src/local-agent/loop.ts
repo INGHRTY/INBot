@@ -45,6 +45,7 @@ export async function runLocalAgent(run: LocalAgentRun): Promise<LocalAgentResul
     streamFn: (model, context, options) =>
       run.model.models.stream(model, context, {
         ...options,
+        // The key is this computer's own; it is never written to a log or a result.
         ...(run.model.apiKey ? { apiKey: run.model.apiKey } : {}),
       }),
     getApiKey: async () => run.model.apiKey,

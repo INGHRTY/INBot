@@ -75,7 +75,6 @@ describe("local agent loop", () => {
         provider: "openai-compatible",
         modelId: "fixture",
         baseUrl: model.url,
-        allowPrivate: true,
         apiKey: "test-key",
       });
       const result = await runLocalAgent({
@@ -171,7 +170,6 @@ describe("local agent loop", () => {
         provider: "openai-compatible",
         modelId: "fixture",
         baseUrl: `http://127.0.0.1:${port}/v1`,
-        allowPrivate: true,
         apiKey: "test-key",
       });
       const result = await runLocalAgent({

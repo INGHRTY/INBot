@@ -64,14 +64,14 @@ describe("device model store", () => {
   it("stores a local model without a key", async () => {
     const id = await store.save({
       label: "Ollama",
-      provider: "local",
+      provider: "openai-compatible",
       modelId: "qwen3",
+      baseUrl: "http://127.0.0.1:11434/v1",
       acceptsImages: false,
-      allowPrivate: true,
     });
     const resolved = await store.resolve(id);
     expect(resolved.apiKey).toBeUndefined();
-    expect(resolved.allowPrivate).toBe(true);
+    expect(resolved.baseUrl).toBe("http://127.0.0.1:11434/v1");
   });
 
   it("removes a connection", async () => {

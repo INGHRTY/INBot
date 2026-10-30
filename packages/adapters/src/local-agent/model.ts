@@ -1,12 +1,13 @@
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { Api, Model, Models, Provider } from "@earendil-works/pi-ai";
+import { createProvider } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { registerLocalProvider } from "../pi-local-provider.js";
+import { DEFAULT_MODEL_CONTEXT_WINDOW, DEFAULT_MODEL_MAX_TOKENS } from "@rakazo/contracts";
+import { inputModalities } from "../model-modalities.js";
 import { applyPiModelCompatibility } from "../pi-model-compat.js";
-import {
-  OPENAI_COMPATIBLE_PROVIDER_ID,
-  registerOpenAiCompatibleCatalog,
-  registerOpenAiCompatibleRuntime,
-} from "../pi-openai-compatible-provider.js";
+
+/** The provider id under which this computer's own model endpoint is registered. */
+export const DEVICE_MODEL_PROVIDER_ID = "device";
 
 /**
  * A model connection stored on this computer.
@@ -27,8 +28,6 @@ export interface DeviceModelConnection {
   acceptsImages?: boolean;
   /** Whether the model reasons before answering. */
   reasoning?: boolean;
-  /** A local model server may live on a private address. */
-  allowPrivate?: boolean;
   maxTokens?: number;
   contextWindow?: number;
 }
@@ -43,29 +42,56 @@ export interface BoundDeviceModel {
 /**
  * Binds a connection to a model the agent can talk to.
  *
- * The catalog providers come from Pi; a custom endpoint is registered the same way the
- * server registers one, so the device and the server reach a provider the same way.
+ * A connection with an endpoint is registered here rather than through the server's
+ * provider: the server guards against a bot reaching internal addresses, but on the
+ * person's own computer a loopback endpoint is exactly what a local model is. The
+ * built-in catalog still serves a connection that names a hosted provider.
  */
 export function bindDeviceModel(connection: DeviceModelConnection): BoundDeviceModel {
-  if (!connection.modelId.trim()) throw new Error("The model connection names no model");
-  let models = registerOpenAiCompatibleCatalog(
-    registerLocalProvider(applyPiModelCompatibility(builtinModels())),
-  );
-  if (connection.baseUrl) {
-    models = registerOpenAiCompatibleRuntime(models, {
-      modelId: connection.modelId.trim(),
-      baseUrl: connection.baseUrl,
-      allowPrivate: connection.allowPrivate,
-      reasoning: connection.reasoning,
-      acceptsImages: connection.acceptsImages,
-      maxTokens: connection.maxTokens,
-      contextWindow: connection.contextWindow,
-    });
+  const modelId = connection.modelId.trim();
+  if (!modelId) throw new Error("The model connection names no model");
+  if (!connection.baseUrl) {
+    const models = applyPiModelCompatibility(builtinModels());
+    const model = models.getModel(connection.provider, modelId);
+    if (!model) {
+      throw new Error(`The model ${modelId} is not available on this computer`);
+    }
+    return { models, model, apiKey: connection.apiKey };
   }
-  const provider = connection.baseUrl ? OPENAI_COMPATIBLE_PROVIDER_ID : connection.provider;
-  const model = models.getModel(provider, connection.modelId.trim());
-  if (!model) {
-    throw new Error(`The model ${connection.modelId} is not available on this computer`);
-  }
+  const model: Model<"openai-completions"> = {
+    id: modelId,
+    name: modelId,
+    api: "openai-completions",
+    provider: DEVICE_MODEL_PROVIDER_ID,
+    baseUrl: connection.baseUrl,
+    reasoning: connection.reasoning === true,
+    compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+    input: inputModalities(connection.acceptsImages === true),
+    // The person pays their own provider, so there is nothing for Rakazo to bill.
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: connection.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW,
+    maxTokens: connection.maxTokens ?? DEFAULT_MODEL_MAX_TOKENS,
+  };
+  const models = applyPiModelCompatibility(builtinModels());
+  models.setProvider(deviceProvider(connection.baseUrl, model));
   return { models, model, apiKey: connection.apiKey };
+}
+
+function deviceProvider(baseUrl: string, model: Model<"openai-completions">): Provider {
+  return createProvider({
+    id: DEVICE_MODEL_PROVIDER_ID,
+    name: "This computer's model",
+    baseUrl,
+    auth: {
+      apiKey: {
+        name: "This computer's model",
+        resolve: async () => ({
+          auth: { apiKey: "device", baseUrl },
+          source: "this computer",
+        }),
+      },
+    },
+    models: [model],
+    api: openAICompletionsApi(),
+  });
 }
