@@ -389,6 +389,21 @@ const working: Scenario = {
         status: "finished",
         url: "https://example.test/agents/cloud-2",
         prUrl: "https://example.test/pull/42",
+        result: "Exported 240 rows to CSV.",
+      },
+    ]),
+    bot([
+      {
+        kind: "cloud_agent",
+        agentId: "cloud-3",
+        title: "Open the invoice",
+        status: "running",
+        url: "",
+        awaitingApproval: {
+          action: "type",
+          summary: "Type in Safari",
+          detail: "INV-2041",
+        },
       },
     ]),
     bot([{ kind: "computer", state: "Needs you", text: "The site wants a captcha solved." }]),
