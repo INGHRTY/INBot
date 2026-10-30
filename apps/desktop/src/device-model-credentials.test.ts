@@ -74,6 +74,25 @@ describe("device model store", () => {
     expect(resolved.baseUrl).toBe("http://127.0.0.1:11434/v1");
   });
 
+  it("uses the only connection as the default, and refuses to pick among several", async () => {
+    await expect(store.defaultConnection()).resolves.toBeUndefined();
+    const only = await store.save({
+      label: "My model",
+      provider: "openai-compatible",
+      modelId: "gpt-5",
+      acceptsImages: false,
+    });
+    await expect(store.defaultConnection()).resolves.toBe(only);
+    await store.save({
+      label: "Work model",
+      provider: "openai-compatible",
+      modelId: "gpt-4.1",
+      acceptsImages: false,
+    });
+    // Two connections means the person must choose, not that one is guessed.
+    await expect(store.defaultConnection()).resolves.toBeUndefined();
+  });
+
   it("removes a connection", async () => {
     const id = await store.save({
       label: "My model",

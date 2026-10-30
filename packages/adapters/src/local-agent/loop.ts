@@ -17,6 +17,8 @@ export interface LocalAgentRun {
   onEvent: (event: TaskEvent) => void;
   /** Stops the run when the task is cancelled. */
   signal: AbortSignal;
+  /** Waits for the next instruction the cloud adds to this task, if any. */
+  nextInstruction?: () => Promise<string | undefined>;
 }
 
 export interface LocalAgentResult {
@@ -69,7 +71,7 @@ export async function runLocalAgent(run: LocalAgentRun): Promise<LocalAgentResul
       run.onEvent({
         kind: "blocked",
         at,
-        reason: safeSummary(event.toolName, event.result) ?? "The action did not run",
+        reason: safeSummary(event.result) ?? "The action did not run",
       });
       return;
     }
@@ -78,9 +80,25 @@ export async function runLocalAgent(run: LocalAgentRun): Promise<LocalAgentResul
       at,
       index: Math.max(steps - 1, 0),
       action: event.toolName,
-      summary: safeSummary(event.toolName, event.result) ?? event.toolName,
+      summary: safeSummary(event.result) ?? event.toolName,
     });
   });
+
+  // A person can add an instruction while the task runs. It joins the conversation as
+  // their own words, and never steers a turn that is already in flight.
+  const instructions = run.nextInstruction
+    ? (async () => {
+        for (
+          let text = await run.nextInstruction!();
+          text !== undefined && !stopped;
+          text = await run.nextInstruction!()
+        ) {
+          if (!text.trim()) continue;
+          agent.steer({ role: "user", content: text, timestamp: Date.now() });
+        }
+      })()
+    : undefined;
+  instructions?.catch(() => undefined);
 
   const deadline = setTimeout(() => {
     stopped ??= "deadline";
@@ -113,7 +131,7 @@ export async function runLocalAgent(run: LocalAgentRun): Promise<LocalAgentResul
  * It comes from the tool, which knows what it did and what is safe to say. It never
  * carries a coordinate, a typed text, a command, or a frame.
  */
-function safeSummary(toolName: string, result: unknown): string | undefined {
+function safeSummary(result: unknown): string | undefined {
   const details = (result as { details?: { summary?: unknown } } | undefined)?.details;
   const summary = details?.summary;
   return typeof summary === "string" && summary.length > 0 ? summary : undefined;

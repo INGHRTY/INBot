@@ -1,9 +1,16 @@
 import type { AdapterContext } from "@rakazo/adapter-kit";
 import { describe, expect, it } from "vitest";
 import { CursorCloudAgentEmulator, EmulatorCloudAgentProvider } from "./cloud-agent-emulator.js";
-import { cloudAgentsEnabled, createCloudAgentConnection } from "./cloud-agent-factory.js";
+import {
+  cloudAgentsEnabled,
+  createCloudAgentConnection,
+  createCloudAgentProviders,
+  LOCAL_DEVICE_KEY_PREFIX,
+  localDeviceProviderKey,
+} from "./cloud-agent-factory.js";
 import { resolveCloudAgentProvider } from "./cloud-agent-provider-env.js";
 import { CursorCloudAgentProvider } from "./cursor-cloud-agent.js";
+import { LOCAL_TASK_GRANT_HOURS, localTaskGrant } from "./local-device-cloud-agent-factory.js";
 
 const ctx: AdapterContext = {
   operationId: "operation",
@@ -114,5 +121,88 @@ describe("cloud agent composition", () => {
         "test-space",
       ),
     ).toBe(true);
+  });
+});
+
+describe("cloud agent providers", () => {
+  const spaceId = "test-space";
+  const userId = "test-user";
+
+  function deployment() {
+    return createCloudAgentConnection({ CLOUD_AGENT_PROVIDER: "emulator" })!;
+  }
+  function device(connected: string | null) {
+    return {
+      connected: async (id: string) =>
+        connected && id === userId ? { deviceId: connected } : null,
+    };
+  }
+
+  it("offers the deployment provider first and the person's computer when it is connected", async () => {
+    const own = { provider: {} as never, key: localDeviceProviderKey("device-1") };
+    const providers = createCloudAgentProviders({
+      deployment: deployment(),
+      devices: device("device-1"),
+      localDevice: () => own.provider,
+    });
+    expect(await providers.available(spaceId, userId)).toBe(true);
+    expect(await providers.keyFor(spaceId, userId)).toBe(deployment().key);
+    expect(await providers.forUser(userId)).toEqual(own);
+  });
+
+  it("falls back to the person's computer when the deployment has none", async () => {
+    const own = { provider: {} as never, key: localDeviceProviderKey("device-1") };
+    const providers = createCloudAgentProviders({
+      deployment: null,
+      devices: device("device-1"),
+      localDevice: () => own.provider,
+    });
+    expect(await providers.keyFor(spaceId, userId)).toBe(own.key);
+    expect(await providers.forKey(spaceId, userId, own.key)).toEqual(own);
+  });
+
+  it("offers nothing when the person has no connected computer and no deployment provider", async () => {
+    const providers = createCloudAgentProviders({
+      deployment: null,
+      devices: device(null),
+      localDevice: () => ({}) as never,
+    });
+    expect(await providers.available(spaceId, userId)).toBe(false);
+    expect(await providers.keyFor(spaceId, userId)).toBeUndefined();
+  });
+
+  it("never hands an agent to a provider whose key it was not created with", async () => {
+    const providers = createCloudAgentProviders({
+      deployment: deployment(),
+      devices: device("device-1"),
+      localDevice: () => ({}) as never,
+    });
+    expect(await providers.forKey(spaceId, userId, "local-device:other-device")).toBeNull();
+  });
+
+  it("tells reconciliation to look for the deployment key and every device key", () => {
+    const providers = createCloudAgentProviders({
+      deployment: deployment(),
+      devices: device("device-1"),
+      localDevice: () => ({}) as never,
+    });
+    expect(providers.keys()).toEqual({
+      exact: [deployment().key],
+      prefixes: [LOCAL_DEVICE_KEY_PREFIX],
+    });
+  });
+});
+
+describe("the grant a dispatched task runs under", () => {
+  it("starts denied, asks for every action, and expires", () => {
+    const now = new Date("2026-10-30T00:00:00.000Z");
+    const grant = localTaskGrant(now);
+    expect(grant.preapproved).toEqual({});
+    expect(grant.onDemand).toBe("ask");
+    expect(grant.denied).toEqual({});
+    // An hour is long enough for a task and short enough that a forgotten one stops.
+    expect(new Date(grant.expiresAt).getTime() - now.getTime()).toBe(
+      LOCAL_TASK_GRANT_HOURS * 60 * 60_000,
+    );
   });
 });

@@ -40,11 +40,19 @@ describe("consent grants", () => {
   it("includes reachable helper models and cloud services for a targeted send", async () => {
     const { deps, actor } = setup();
     deps.env.agentRuntime = "pi";
-    deps.cloudAgent = {
+    const connection = {
       key: "test",
       spaceId: actor.spaceId,
       provider: { describe: () => ({ id: "cursor", capabilities: { offline: false } }) },
-    } as RouterDeps["cloudAgent"];
+    };
+    deps.cloudAgent = {
+      deployment: connection,
+      forUser: async () => undefined,
+      available: async () => true,
+      keyFor: async () => connection.key,
+      forKey: async () => connection,
+      keys: () => ({ exact: [connection.key], prefixes: [] }),
+    } as unknown as RouterDeps["cloudAgent"];
     vi.mocked(deps.prisma.userModelPreference.findMany).mockResolvedValue([
       {
         modelId: "helper-model",

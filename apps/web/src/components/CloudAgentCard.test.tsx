@@ -46,6 +46,7 @@ it("shows the action a task is waiting to be allowed to take", () => {
   const view = render(
     card({
       awaitingApproval: {
+        approvalId: "type",
         action: "type",
         summary: "Type in Safari",
         detail: "hunter2",
@@ -65,7 +66,7 @@ it("shows what the task answered", () => {
 it("answers the action it showed, not whatever the task asks next", async () => {
   const answers: Array<[string, boolean]> = [];
   const block = card({
-    awaitingApproval: { action: "click", summary: "Click in Safari" },
+    awaitingApproval: { approvalId: "click@Safari", action: "click", summary: "Click in Safari" },
   });
   act(() =>
     root.render(

@@ -16,12 +16,18 @@ export const localAgentTaskSchema = z.object({
   /** The bot the task belongs to, for auditing and for memory. */
   botId: z.string().min(1).max(256),
   grant: taskGrantSchema,
-  model: z.object({
-    provider: z.string().min(1).max(64),
-    id: z.string().min(1).max(256),
-    /** Names a model connection stored on the computer. Never carries the key itself. */
-    connectionRef: z.string().min(1).max(128).optional(),
-  }),
+  /**
+   * The model to run with. Absent means this computer's own default connection, which
+   * keeps the cloud from having to know what is installed on someone's Mac.
+   */
+  model: z
+    .object({
+      provider: z.string().min(1).max(64).optional(),
+      id: z.string().min(1).max(256).optional(),
+      /** Names a model connection stored on the computer. Never carries the key itself. */
+      connectionRef: z.string().min(1).max(128).optional(),
+    })
+    .optional(),
   budget: z.object({
     maxSteps: z.number().int().positive().max(200),
     maxSeconds: z.number().int().positive().max(86_400),
@@ -103,6 +109,8 @@ export const taskStatusSchema = z.object({
    */
   awaitingApproval: z
     .object({
+      /** The id the computer is waiting on. An answer must carry this exact one. */
+      approvalId: z.string().min(1).max(128),
       action: z.string().min(1).max(64),
       summary: z.string().min(1).max(2000),
       detail: z.string().max(4000).optional(),

@@ -406,7 +406,7 @@ describe("device tasks", () => {
 
   it("runs a task and reports what happened", async () => {
     start({
-      async run(task, control) {
+      async run(_task, control) {
         control.event({ kind: "started", at: "2026-01-01T00:00:00.000Z" });
         control.event({
           kind: "step",

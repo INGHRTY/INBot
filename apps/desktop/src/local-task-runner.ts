@@ -21,6 +21,7 @@ export function createDesktopTaskRunner(deps: {
     screen: createDesktopHostScreen(),
     home,
     connection: (reference) => models.resolve(reference),
+    defaultConnection: () => models.defaultConnection(),
     runShell: (command, cwd) => runTaskShell(command, cwd),
   });
 }

@@ -26,12 +26,17 @@ export async function pollCloudAgent(
   deps: CloudAgentDeps,
   payload: BackgroundJobPayloads["cloud_agent.poll"],
 ) {
-  const connection = deps.cloudAgent;
-  if (!connection) return;
-  const stored = await deps.prisma.cloudAgent.findFirst({
-    where: { id: payload.agentId, providerKey: connection.key },
-  });
-  if (!stored?.nextPollAt || !cloudAgentsEnabled(connection, stored.spaceId)) return;
+  if (!deps.cloudAgent) return;
+  const stored = await deps.prisma.cloudAgent.findUnique({ where: { id: payload.agentId } });
+  if (!stored?.nextPollAt) return;
+  // The row names the provider it was created with, so a deployment change does not
+  // redirect an agent that is already running somewhere else.
+  const connection = await deps.cloudAgent.forKey(
+    stored.spaceId,
+    stored.userId,
+    stored.providerKey,
+  );
+  if (!connection || !cloudAgentsEnabled(connection, stored.spaceId)) return;
   const token = randomUUID();
   const claimed = await deps.prisma.cloudAgent.updateMany({
     where: {
@@ -173,7 +178,12 @@ export async function pollCloudAgent(
             cloudAgentPromptSchema.parse(agent.followup),
             context,
           );
-          if (!snapshot.latestRunId || snapshot.latestRunId === agent.latestRunId)
+          // A provider that continues the same run has nothing new to point at; the
+          // command was already delivered, so the reply is accepted as it stands.
+          if (
+            !provider.describe().capabilities.replyInPlace &&
+            (!snapshot.latestRunId || snapshot.latestRunId === agent.latestRunId)
+          )
             throw new Error("Cloud agent follow-up did not identify a new run");
           await finishPoll(deps, agent, {
             ...snapshotData(snapshot),

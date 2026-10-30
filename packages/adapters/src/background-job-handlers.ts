@@ -15,7 +15,7 @@ import type { PrismaClient, ThreadEvents } from "@rakazo/db";
 import { runAsSystem, runAsTenant } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { settleCallRequest } from "./call-request.js";
-import type { CloudAgentConnection } from "./cloud-agent-factory.js";
+import type { CloudAgentProviders } from "./cloud-agent-factory.js";
 import { pollCloudAgent } from "./cloud-agent-poll.js";
 import { expireComputerControl } from "./computer-control.js";
 import { scheduleComputerSleep, sleepComputerIfIdle } from "./computer-idle.js";
@@ -65,7 +65,7 @@ export function createBackgroundJobHandlers(deps: {
   deploymentModelKey?: string;
   deploymentModelConfigured?: boolean;
   messaging?: MessagingSurface;
-  cloudAgent?: CloudAgentConnection | null;
+  cloudAgent?: CloudAgentProviders | null;
   paymentWallet?: PaymentWalletProvider | null;
   notifications?: ExpoPushProvider;
 }): BackgroundJobHandlers {

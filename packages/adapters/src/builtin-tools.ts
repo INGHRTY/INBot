@@ -730,7 +730,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "cloud_agent_launch",
     description:
-      "Launch a remote cloud coding agent on a connected repository. Returns immediately with a tracking id and status; the agent link appears when launched. Opens a PR when openPr is true. Not the bot computer.",
+      "Start a task that runs away from this chat and reports back here: a remote cloud coding agent on a connected repository, or a task on the requesting person's own computer when they have one. Returns immediately with a tracking id. Repository and openPr apply only to a cloud agent. Not the bot's computer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -754,7 +754,8 @@ export const builtinAgentTools: ConnectorTool[] = [
   },
   {
     name: "cloud_agent_status",
-    description: "Get status, branch, and PR url for a cloud coding agent.",
+    description:
+      "Get the status of a task started with cloud_agent_launch: its answer, branch, and PR url when it has one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -766,7 +767,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   },
   {
     name: "cloud_agent_reply",
-    description: "Send a follow-up prompt to an existing cloud coding agent.",
+    description: "Send a follow-up instruction to a task started with cloud_agent_launch.",
     inputSchema: {
       type: "object",
       properties: {

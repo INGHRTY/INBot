@@ -4,7 +4,7 @@ import type { PrismaClient } from "@rakazo/db";
 import { asSystem, clearThread, createDb, runAsSystem, runAsTenant } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CursorCloudAgentEmulator } from "./cloud-agent-emulator.js";
-import type { CloudAgentConnection } from "./cloud-agent-factory.js";
+import type { CloudAgentConnection, CloudAgentProviders } from "./cloud-agent-factory.js";
 import { pollCloudAgent } from "./cloud-agent-poll.js";
 import { executeCloudAgentTool, reconcileCloudAgents } from "./cloud-agent-service.js";
 import { CursorCloudAgentProvider } from "./cursor-cloud-agent.js";
@@ -89,6 +89,16 @@ describePostgres("cloud agent lifecycle and recovery (PostgreSQL + Cursor emulat
       spaceId: id,
       provider: new CursorCloudAgentProvider({ apiKey: "fake-key", fetch: wire.fetch }),
     };
+    // One deployment provider in this Space, so every agent resolves to it.
+    const providers: CloudAgentProviders = {
+      deployment: connection,
+      forUser: async () => undefined,
+      available: async (spaceId) => spaceId === id,
+      keyFor: async (spaceId) => (spaceId === id ? connection.key : undefined),
+      forKey: async (spaceId, _userId, key) =>
+        spaceId === id && key === connection.key ? connection : null,
+      keys: () => ({ exact: [connection.key], prefixes: [] }),
+    };
     const enqueue = vi.fn(async (_job: BackgroundJob) => undefined);
     const jobs: JobPublisher = {
       enqueue,
@@ -99,7 +109,7 @@ describePostgres("cloud agent lifecycle and recovery (PostgreSQL + Cursor emulat
       prisma,
       jobs,
       events: { notify: vi.fn(async () => undefined) },
-      cloudAgent: connection,
+      cloudAgent: providers,
     };
     const context: AdapterContext & { botId: string } = {
       operationId: randomUUID(),

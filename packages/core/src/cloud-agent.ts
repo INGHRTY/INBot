@@ -12,11 +12,17 @@ export function cloudAgentHttpsUrl(value: string | null | undefined): string | u
 
 function awaitingApprovalFrom(
   value: unknown,
-): { action: string; summary: string; detail?: string } | undefined {
+): { approvalId: string; action: string; summary: string; detail?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
-  if (typeof record.action !== "string" || typeof record.summary !== "string") return undefined;
+  if (
+    typeof record.approvalId !== "string" ||
+    typeof record.action !== "string" ||
+    typeof record.summary !== "string"
+  )
+    return undefined;
   return {
+    approvalId: record.approvalId,
     action: record.action,
     summary: record.summary,
     ...(typeof record.detail === "string" ? { detail: record.detail } : {}),

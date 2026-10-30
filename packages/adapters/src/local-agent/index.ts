@@ -3,7 +3,6 @@ import type { UserDeviceTaskControl, UserDeviceTaskRunner } from "../user-device
 import { runLocalAgent } from "./loop.js";
 import type { DeviceModelConnection } from "./model.js";
 import { bindDeviceModel } from "./model.js";
-import { runTaskShell } from "./shell.js";
 import { localAgentSystemPrompt } from "./system-prompt.js";
 import type { ShellResult } from "./tools.js";
 import { localAgentTools } from "./tools.js";
@@ -15,6 +14,8 @@ export interface LocalAgentRunnerDeps {
   home: string;
   /** Reads a model connection stored on this computer, keychain included. */
   connection: (reference: string) => Promise<DeviceModelConnection>;
+  /** The connection to use when the task names none: the one this computer defaults to. */
+  defaultConnection?: () => Promise<string | undefined>;
   /** Runs a shell command in the task's folder. */
   runShell: (command: string, cwd: string) => Promise<ShellResult>;
 }
@@ -29,8 +30,8 @@ export interface LocalAgentRunnerDeps {
 export function createLocalAgentRunner(deps: LocalAgentRunnerDeps): UserDeviceTaskRunner {
   return {
     async run(task, control: UserDeviceTaskControl) {
-      const reference = task.model.connectionRef;
-      if (!reference) throw new Error("The task names no model connection");
+      const reference = task.model?.connectionRef ?? (await deps.defaultConnection?.());
+      if (!reference) throw new Error("This computer has no model connection to run the task");
       const connection = await deps.connection(reference);
       const model = bindDeviceModel(connection);
       const deniedPatterns = new Set<string>();
@@ -51,6 +52,7 @@ export function createLocalAgentRunner(deps: LocalAgentRunnerDeps): UserDeviceTa
         systemPrompt: localAgentSystemPrompt(),
         onEvent: (event) => control.event(event),
         signal: control.signal,
+        nextInstruction: () => control.nextInstruction(),
       });
       return { answer: result.answer, ...(result.summary ? { summary: result.summary } : {}) };
     },

@@ -10,13 +10,12 @@ import type {
   TransactionalEmailProvider,
 } from "@rakazo/adapter-kit";
 import type {
-  CloudAgentConnection,
+  CloudAgentProviders,
   CodexLiveCatalog,
   ComposioProvider,
   ConnectorRegistry,
   FaviconResolver,
   IntegrationProviderSettings,
-  LocalDeviceCloudAgentProvider,
   McpConnector,
   McpOAuthBroker,
   MemoryProviderResolver,
@@ -61,11 +60,9 @@ export { callMarkerClientNonce } from "./routes/threads.js";
 export interface RouterDeps {
   pushTokens: PushTokenStore;
   analytics?: ProductAnalytics;
-  cloudAgent?: CloudAgentConnection | null;
+  cloudAgent?: CloudAgentProviders | null;
   /** The requesting user's connected computer, so a task can be started on it. */
   userDevices?: UserDeviceGateway;
-  /** Answers a task running on that computer when it stops at an action. */
-  localDeviceAgents?: LocalDeviceCloudAgentProvider;
   /** The deployment's wallet provider; absent hides purchases. */
   paymentWallet?: PaymentWalletProvider | null;
   prisma: PrismaClient;

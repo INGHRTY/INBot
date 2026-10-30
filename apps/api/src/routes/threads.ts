@@ -1,6 +1,10 @@
 import { ORPCError } from "@orpc/server";
 import { runContinueJob, runJobKey } from "@rakazo/adapter-kit";
-import { settleCallRequest } from "@rakazo/adapters";
+import {
+  LocalDeviceCloudAgentProvider,
+  resolveCloudAgent,
+  settleCallRequest,
+} from "@rakazo/adapters";
 import type { ProductEvent } from "@rakazo/contracts";
 import {
   AttachmentValidationError,
@@ -232,20 +236,33 @@ export function threadsRoutes(ctx: RouterContext) {
           },
           select: { id: true, awaitingApproval: true, status: true },
         });
-        if (!agent || agent.status !== "running") {
+        if (agent?.status !== "running") {
           throw new ORPCError("CONFLICT", { message: "That task is no longer waiting" });
         }
         // The card the person saw must be the action they are answering, so a card that
-        // changed underneath them cannot approve something else.
-        const shown = agent.awaitingApproval as { action?: unknown } | null;
-        if (typeof shown?.action !== "string" || shown.action !== input.approvalAction) {
+        // changed underneath them cannot approve something else. The id is the computer's
+        // own key for the pending action, so an answer carrying it reaches that action.
+        const shown = agent.awaitingApproval as { approvalId?: unknown; action?: unknown } | null;
+        if (
+          typeof shown?.approvalId !== "string" ||
+          typeof shown.action !== "string" ||
+          shown.action !== input.approvalAction
+        ) {
           throw new ORPCError("CONFLICT", { message: "That task is asking something else now" });
         }
-        const provider = deps.localDeviceAgents;
-        if (!provider) throw new ORPCError("CONFLICT", { message: "That task cannot be answered" });
+        const connection = await resolveCloudAgent(
+          deps.cloudAgent,
+          context.actor.spaceId,
+          context.actor.userId,
+        );
+        // Only a task on someone's own computer raises this card; other providers have no
+        // pending action to answer.
+        const provider = connection?.provider;
+        if (!(provider instanceof LocalDeviceCloudAgentProvider))
+          throw new ORPCError("CONFLICT", { message: "That task cannot be answered" });
         await provider.decide(
           agent.id,
-          { approvalId: input.approvalAction, allowed: input.allowed },
+          { approvalId: shown.approvalId, allowed: input.allowed },
           {
             operationId: agent.id,
             traceId: agent.id,

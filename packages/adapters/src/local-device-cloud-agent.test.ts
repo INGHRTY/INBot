@@ -42,7 +42,7 @@ function device(overrides: Partial<UserDeviceGateway> = {}) {
     request: async function* <T>(): AsyncIterable<T> {
       yield status as T;
     },
-    taskCommand: async (userId: string, taskId: string, command: UserDeviceTaskCommand) => {
+    taskCommand: async (_userId: string, taskId: string, command: UserDeviceTaskCommand) => {
       commands.push({ taskId, command });
       return true;
     },
@@ -65,6 +65,7 @@ function device(overrides: Partial<UserDeviceGateway> = {}) {
 function provider(gateway: UserDeviceGateway) {
   return new LocalDeviceCloudAgentProvider({
     devices: gateway,
+    deviceId: "device-1",
     grant: () => grant,
     model: () => ({ provider: "openai", id: "gpt", connectionRef: "ref-1" }),
     budget: { maxSteps: 10, maxSeconds: 60 },
@@ -86,6 +87,39 @@ describe("local device cloud agent", () => {
     });
   });
 
+  it("leaves the model to the computer when none is configured", async () => {
+    const { gateway, started } = device();
+    await new LocalDeviceCloudAgentProvider({
+      devices: gateway,
+      deviceId: "device-1",
+      grant: () => grant,
+      budget: { maxSteps: 10, maxSeconds: 60 },
+    }).launch({ idempotencyKey: "task-1", prompt: "Open Safari" }, context);
+    expect(started[0]).not.toHaveProperty("model");
+  });
+
+  it("pins every request to the computer it was built for", async () => {
+    const calls: Array<string | undefined> = [];
+    const { gateway } = device({
+      task: async (_userId, _task, _signal, deviceId) => {
+        calls.push(deviceId);
+        return { updates: () => (async function* () {})(), decide() {}, cancel() {} };
+      },
+      request: async function* <T>(
+        _userId: string,
+        _request: never,
+        _signal: never,
+        deviceId: string | undefined,
+      ) {
+        calls.push(deviceId);
+        yield { taskId: "task-1", state: "finished", answer: "done" } as T;
+      },
+    });
+    await provider(gateway).launch({ idempotencyKey: "task-1", prompt: "Open Safari" }, context);
+    await provider(gateway).get("task-1", context);
+    expect(calls).toEqual(["device-1", "device-1"]);
+  });
+
   it("reports a running task as running", async () => {
     const { gateway } = device();
     const snapshot = await provider(gateway).get("task-1", context);
@@ -105,10 +139,16 @@ describe("local device cloud agent", () => {
     setStatus({
       taskId: "task-1",
       state: "running",
-      awaitingApproval: { action: "type", summary: "Type in Safari", detail: "hunter2" },
+      awaitingApproval: {
+        approvalId: "type",
+        action: "type",
+        summary: "Type in Safari",
+        detail: "hunter2",
+      },
     });
     const snapshot = await provider(gateway).get("task-1", context);
     expect(snapshot.awaitingApproval).toEqual({
+      approvalId: "type",
       action: "type",
       summary: "Type in Safari",
       detail: "hunter2",

@@ -249,6 +249,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
      */
     awaitingApproval: z
       .object({
+        /** The id the computer is waiting on, so a stale answer cannot approve another action. */
+        approvalId: z.string(),
         /** What it wants to do, in a few words: "click", "type", "shell", "write". */
         action: z.string(),
         /** One line the person can judge at a glance. */

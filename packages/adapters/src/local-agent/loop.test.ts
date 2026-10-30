@@ -12,10 +12,19 @@ import { localAgentTools } from "./tools.js";
 const png = Uint8Array.from(Buffer.from("89504e470d0a1a0a", "hex"));
 
 /** A model that asks for one screenshot and then answers. */
-async function startModel(): Promise<{ url: string; close: () => Promise<void>; calls: number[] }> {
+async function startModel(): Promise<{
+  url: string;
+  close: () => Promise<void>;
+  calls: number[];
+  /** Every message body the model was sent, in order. */
+  bodies: string[];
+}> {
   const calls: number[] = [];
+  const bodies: string[] = [];
   const server = createServer((request, response) => {
-    request.resume();
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => bodies.push(Buffer.concat(chunks).toString("utf8")));
     calls.push(calls.length + 1);
     const choice =
       calls.length === 1
@@ -45,6 +54,7 @@ async function startModel(): Promise<{ url: string; close: () => Promise<void>; 
   return {
     url: `http://127.0.0.1:${port}/v1`,
     calls,
+    bodies,
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -121,6 +131,77 @@ describe("local agent loop", () => {
         action: "computer_observe",
         summary: "Looked at the screen",
       });
+    } finally {
+      await model.close();
+    }
+  });
+
+  it("adds an instruction the person sends while the task runs", async () => {
+    const model = await startModel();
+    try {
+      const seen: string[] = [];
+      const bound = bindDeviceModel({
+        provider: "openai-compatible",
+        modelId: "fixture",
+        baseUrl: model.url,
+        apiKey: "test-key",
+      });
+      let delivered = false;
+      const result = await runLocalAgent({
+        task: {
+          taskId: "task-1",
+          prompt: "Open Safari.",
+          botId: "bot-1",
+          grant: {
+            preapproved: {},
+            onDemand: "ask",
+            denied: {},
+            expiresAt: "2030-01-01T00:00:00.000Z",
+          },
+          model: { provider: "openai-compatible", id: "fixture", connectionRef: "ref-1" },
+          budget: { maxSteps: 5, maxSeconds: 30 },
+        },
+        tools: localAgentTools({
+          screen: new HostScreen({
+            async capture() {
+              return { image: png, mimeType: "image/png", width: 1280, height: 800 };
+            },
+            async inject() {},
+            async frontmost() {
+              return { id: "42", title: "Safari" };
+            },
+          }),
+          home: "/tmp/rakazo-task",
+          grant: {
+            preapproved: {},
+            onDemand: "ask",
+            denied: {},
+            expiresAt: "2030-01-01T00:00:00.000Z",
+          },
+          approve: async (request) => ({ approvalId: request.approvalId, allowed: true }),
+          runShell: async () => ({ stdout: "", stderr: "", code: 0 }),
+          frontmostApp: async () => "Safari",
+          deniedPatterns: new Set(),
+          signal: new AbortController().signal,
+        }),
+        model: bound,
+        systemPrompt: "You are working on one person's Mac.",
+        onEvent: (event) => {
+          if (event.kind === "step") seen.push(event.summary);
+        },
+        signal: new AbortController().signal,
+        nextInstruction: async () => {
+          if (delivered) return undefined;
+          delivered = true;
+          return "Also open the address bar.";
+        },
+      });
+
+      // The instruction reached the model as a person's words, not as tool output.
+      expect(result.answer).toBe("Safari is open.");
+      expect(seen).toEqual(["Looked at the screen"]);
+      expect(model.calls.length).toBeGreaterThan(1);
+      expect(model.bodies.join("\n")).toContain("Also open the address bar.");
     } finally {
       await model.close();
     }

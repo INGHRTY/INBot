@@ -22,10 +22,15 @@ const REPLY_TIMEOUT_MS = 20_000;
 
 export interface LocalDeviceCloudAgentOptions {
   devices: UserDeviceGateway;
+  /** The computer this provider runs tasks on. */
+  deviceId: string;
   /** The grant a task runs under. The computer enforces it; the cloud only sends it. */
   grant: (context: AdapterContext) => TaskGrant | Promise<TaskGrant>;
-  /** Which model connection on the computer the task uses. */
-  model: (context: AdapterContext) => { provider: string; id: string; connectionRef?: string };
+  /**
+   * Which model connection on the computer the task uses. Omit to let the computer use
+   * its own default, which is how a person's Mac keeps its setup private from the cloud.
+   */
+  model?: (context: AdapterContext) => { provider?: string; id?: string; connectionRef?: string };
   budget?: { maxSteps: number; maxSeconds: number };
 }
 
@@ -47,7 +52,7 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
       id: "local-device",
       contractVersion: "1",
       adapterVersion: "0.1.0",
-      capabilities: { launch: true, reply: true, cancel: true, offline: false },
+      capabilities: { launch: true, reply: true, cancel: true, offline: false, replyInPlace: true },
     };
   }
 
@@ -58,7 +63,12 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
     const task = await this.taskFor(request, context);
     const signal = signalFor(request.signal, context.signal, STATUS_TIMEOUT_MS);
     try {
-      const handle = await this.options.devices.task(context.userId, task, signal);
+      const handle = await this.options.devices.task(
+        context.userId,
+        task,
+        signal,
+        this.options.deviceId,
+      );
       // The task runs on the computer, and every later poll asks the computer how it
       // ended, so nothing here needs the updates. Draining them keeps them from piling
       // up on a task that runs for minutes.
@@ -114,7 +124,12 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
     command: UserDeviceTaskCommand,
   ): Promise<boolean> {
     try {
-      return await this.options.devices.taskCommand(context.userId, taskId, command);
+      return await this.options.devices.taskCommand(
+        context.userId,
+        taskId,
+        command,
+        this.options.deviceId,
+      );
     } catch (error) {
       if (error instanceof UserDeviceOfflineError) {
         throw new CloudAgentRetryLater("unavailable", 30_000);
@@ -140,6 +155,7 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
         context.userId,
         { method: "taskStatus", botId: context.botId ?? "", taskId },
         signal,
+        this.options.deviceId,
       )) {
         found = value;
       }
@@ -163,7 +179,7 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
       prompt: request.prompt,
       botId: context.botId ?? "",
       grant,
-      model: this.options.model(context),
+      ...(this.options.model ? { model: this.options.model(context) } : {}),
       budget: this.options.budget ?? { maxSteps: 40, maxSeconds: 600 },
     };
   }

@@ -76,6 +76,17 @@ export class DeviceModelStore {
     await this.write(entries.filter((entry) => entry.id !== id));
   }
 
+  /**
+   * The connection a task uses when the cloud does not name one.
+   *
+   * A person who set up a single connection means that one. With several, the cloud must
+   * say which, so this refuses rather than picking one they did not choose.
+   */
+  async defaultConnection(): Promise<string | undefined> {
+    const entries = await this.entries();
+    return entries.length === 1 ? entries[0]!.id : undefined;
+  }
+
   /** The connection and its key, ready for the agent to use. */
   async resolve(id: string): Promise<DeviceModelConnection> {
     const entry = (await this.entries()).find((candidate) => candidate.id === id);

@@ -385,6 +385,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
             taskStatuses.set(task.taskId, {
               ...known,
               awaitingApproval: {
+                approvalId: request.approvalId,
                 action: request.action,
                 summary: request.summary,
                 ...(request.detail ? { detail: request.detail } : {}),

@@ -1,4 +1,5 @@
 import { normalizedHttpUrl } from "@rakazo/core/egress";
+import type { CloudAgentProviders } from "./cloud-agent-factory.js";
 import { executeCloudAgentTool } from "./cloud-agent-service.js";
 import { collectLogIds } from "./composio-connector.js";
 import { connectApp } from "./connect-app.js";
@@ -14,7 +15,7 @@ export async function cloudAgentTool(ctx: RunContext, call: ToolCall) {
   const { name, args, effectKey } = call;
   return call.finish(
     await executeCloudAgentTool(
-      { ...deps, cloudAgent: ctx.providers.cloudAgent },
+      { ...deps, cloudAgent: ctx.providers.cloudAgent as CloudAgentProviders | null | undefined },
       { ...context, operationId: effectKey, botId: bot.id },
       run,
       name,
