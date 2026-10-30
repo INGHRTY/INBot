@@ -50,6 +50,25 @@ export function CloudAgentCard({
             {block.branch}
           </span>
         ) : null}
+        {block.awaitingApproval ? (
+          <div className="flex flex-col gap-1" data-testid="cloud-agent-awaiting">
+            <span className="text-muted-foreground" dir="auto">
+              {block.awaitingApproval.summary}
+            </span>
+            {block.awaitingApproval.detail ? (
+              <span
+                className="rounded-sm bg-muted px-2 py-1 font-mono text-xs text-muted-foreground"
+                dir="auto"
+              >
+                {block.awaitingApproval.detail}
+              </span>
+            ) : null}
+          </div>
+        ) : block.result ? (
+          <span className="text-muted-foreground whitespace-pre-wrap" dir="auto">
+            {block.result}
+          </span>
+        ) : null}
       </CardContent>
     </Card>
   );

@@ -82,6 +82,7 @@ export class LocalDeviceCloudAgentProvider implements CloudAgentProvider {
       title: "",
       status: statusState(status),
       ...(status.answer !== undefined ? { result: status.answer } : {}),
+      ...(status.awaitingApproval ? { awaitingApproval: status.awaitingApproval } : {}),
       latestRunId: id,
     };
   }

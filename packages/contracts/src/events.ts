@@ -243,6 +243,20 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     latestRunId: z.string().optional(),
     /** What the agent answered, when it answers in text rather than with a pull request. */
     result: z.string().optional(),
+    /**
+     * The action the task is waiting for the person to approve. Set while the task
+     * runs on their computer and has stopped at an action it may not take alone.
+     */
+    awaitingApproval: z
+      .object({
+        /** What it wants to do, in a few words: "click", "type", "shell", "write". */
+        action: z.string(),
+        /** One line the person can judge at a glance. */
+        summary: z.string(),
+        /** The text that would be typed, the command that would run, the path that would change. */
+        detail: z.string().optional(),
+      })
+      .optional(),
   }),
   z.object({
     kind: z.literal("skill_draft"),

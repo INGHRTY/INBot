@@ -97,5 +97,16 @@ export const taskStatusSchema = z.object({
   error: z.string().max(2000).optional(),
   /** The last few things the task did, as the computer already reported them. */
   steps: z.number().int().nonnegative().max(200).optional(),
+  /**
+   * The action the task is waiting for the person to approve. Present only while a
+   * task is stopped at an action it may not take alone.
+   */
+  awaitingApproval: z
+    .object({
+      action: z.string().min(1).max(64),
+      summary: z.string().min(1).max(2000),
+      detail: z.string().max(4000).optional(),
+    })
+    .optional(),
 });
 export type TaskStatus = z.infer<typeof taskStatusSchema>;

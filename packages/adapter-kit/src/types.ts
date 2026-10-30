@@ -1164,6 +1164,15 @@ export interface CloudAgentSnapshot {
    * carries it.
    */
   result?: string;
+  /**
+   * The action the agent is waiting to be allowed to take. A task on someone's own
+   * computer stops at an action it may not take alone, and this is what it stopped at.
+   */
+  awaitingApproval?: {
+    action: string;
+    summary: string;
+    detail?: string;
+  };
 }
 
 export interface CloudAgentReplyRequest {

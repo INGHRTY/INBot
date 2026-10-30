@@ -349,12 +349,29 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
           const answer = new Promise<ActionApprovalDecision>((resolve) => {
             running.approvals.set(request.approvalId, { approvalId: request.approvalId, resolve });
           });
+          // A status request while the person decides shows what they are deciding.
+          const known = taskStatuses.get(task.taskId);
+          if (known) {
+            taskStatuses.set(task.taskId, {
+              ...known,
+              awaitingApproval: {
+                action: request.action,
+                summary: request.summary,
+                ...(request.detail ? { detail: request.detail } : {}),
+              },
+            });
+          }
           await sendTaskMessage({ type: "taskApproval", id, request }).catch(() => undefined);
           const decision = await Promise.race([
             answer,
             aborted(running.controller.signal).then(() => undefined),
           ]);
           running.approvals.delete(request.approvalId);
+          const after = taskStatuses.get(task.taskId);
+          if (after) {
+            const { awaitingApproval: _awaiting, ...rest } = after;
+            taskStatuses.set(task.taskId, rest);
+          }
           // A cancelled task refuses rather than waits for an answer that will not come.
           return decision ?? { approvalId: request.approvalId, allowed: false };
         },

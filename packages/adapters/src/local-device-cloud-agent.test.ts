@@ -100,6 +100,21 @@ describe("local device cloud agent", () => {
     expect(snapshot.result).toBe("Safari is open");
   });
 
+  it("carries the action the task is waiting to be allowed to take", async () => {
+    const { gateway, setStatus } = device();
+    setStatus({
+      taskId: "task-1",
+      state: "running",
+      awaitingApproval: { action: "type", summary: "Type in Safari", detail: "hunter2" },
+    });
+    const snapshot = await provider(gateway).get("task-1", context);
+    expect(snapshot.awaitingApproval).toEqual({
+      action: "type",
+      summary: "Type in Safari",
+      detail: "hunter2",
+    });
+  });
+
   it("reports a failed task as failed", async () => {
     const { gateway, setStatus } = device();
     setStatus({ taskId: "task-1", state: "failed", error: "The screen was locked" });
